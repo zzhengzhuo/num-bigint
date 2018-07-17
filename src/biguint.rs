@@ -1543,6 +1543,10 @@ impl BigUint {
         BigUint::new(slice.to_vec())
     }
 
+    pub fn get_limb(&self, i: usize) -> u32 {
+        self.data[i]
+    }
+
     /// Assign a value to a `BigUint`.
     ///
     /// The digits are in little-endian base 2<sup>32</sup>.
