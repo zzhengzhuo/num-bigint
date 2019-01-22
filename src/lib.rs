@@ -119,6 +119,8 @@ pub mod prime;
 pub mod algorithms;
 pub mod traits;
 
+pub use traits::*;
+
 #[cfg(feature = "rand")]
 mod bigrand;
 

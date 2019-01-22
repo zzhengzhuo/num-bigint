@@ -12,9 +12,7 @@ use Sign::*;
 use big_digit::BigDigit;
 use bigint::{into_magnitude, magnitude};
 use integer::Integer;
-use num_iter::range_step;
 use num_traits::Zero;
-use num_traits::{FromPrimitive, ToPrimitive};
 
 #[cfg(feature = "prime")]
 use crate::prime::probably_prime;
