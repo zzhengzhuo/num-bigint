@@ -1505,25 +1505,9 @@ impl<'a, 'b> Mul<&'b BigInt> for &'a BigInt {
     }
 }
 
-impl<'a, 'b> Mul<&'b mut BigInt> for &'a BigInt {
-    type Output = BigInt;
-
-    #[inline]
-    fn mul(self, other: &mut BigInt) -> BigInt {
-        BigInt::from_biguint(self.sign * other.sign, &self.data * &other.data)
-    }
-}
-
 impl<'a> MulAssign<&'a BigInt> for BigInt {
     #[inline]
     fn mul_assign(&mut self, other: &BigInt) {
-        *self = &*self * other;
-    }
-}
-
-impl<'a> MulAssign<&'a mut BigInt> for BigInt {
-    #[inline]
-    fn mul_assign(&mut self, other: &mut BigInt) {
         *self = &*self * other;
     }
 }

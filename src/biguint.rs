@@ -3211,3 +3211,21 @@ impl<'a, 'b> ExtendedGcd<&'b BigUint> for &'a BigUint {
         (a, b.unwrap(), c.unwrap())
     }
 }
+
+#[test]
+fn test_set_digit() {
+    let mut a = BigUint::new(vec![3]);
+    a.set_digit(4);
+    assert_eq!(a.data.len(), 1);
+    assert_eq!(a.data[0], 4);
+
+    let mut a = BigUint::new(vec![3, 2]);
+    a.set_digit(4);
+    assert_eq!(a.data.len(), 1);
+    assert_eq!(a.data[0], 4);
+
+    let mut a = BigUint::new(vec![]);
+    a.set_digit(4);
+    assert_eq!(a.data.len(), 1);
+    assert_eq!(a.data[0], 4);
+}
