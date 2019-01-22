@@ -64,10 +64,6 @@ pub fn extended_gcd(
     while b.len() > 1 {
         // Attempt to calculate in single-precision using leading words of a and b.
         let (u0, u1, v0, v1, even) = lehmer_simulate(&a, &b);
-        // println!(
-        //     "lehmer simulate {}, {}, {}, {}, {}, {}, {}",
-        //     u0, u1, v0, v1, even, &a, &b
-        // );
         // multiprecision step
         if v0 != 0 {
             // Simulate the effect of the single-precision steps using cosequences.
@@ -102,10 +98,7 @@ pub fn extended_gcd(
         }
     }
 
-    // println!("{} - {}", &a, &b);
-
     if b.len() > 0 {
-        // println!("  -- base case ({} - {})", &a, &b);
         // base case if b is a single digit
         if a.len() > 1 {
             // a is longer than a single word, so one update is needed
@@ -115,7 +108,6 @@ pub fn extended_gcd(
         }
 
         if b.len() > 0 {
-            // println!("  -- inner base case");
             // a and b are both single word
             let mut a_word = a.digits()[0];
             let mut b_word = b.digits()[0];
@@ -128,7 +120,6 @@ pub fn extended_gcd(
                 let mut even = true;
 
                 while b_word != 0 {
-                    // println!("\tloop: {} - {}", a_word, b_word);
                     let q = a_word / b_word;
                     let r = a_word % b_word;
                     a_word = b_word;
@@ -143,22 +134,15 @@ pub fn extended_gcd(
                     vb = k;
                     even = !even;
                 }
-                // println!("\t{} - {} - {}", ua_word, va, even);
+
                 t.data.set_digit(ua_word);
                 s.data.set_digit(va);
                 t.sign = if even { Plus } else { Minus };
                 s.sign = if even { Minus } else { Plus };
 
-                // println!(
-                //     "\t{} {} {} {}",
-                //     t,
-                //     s,
-                //     ua.clone().unwrap(),
-                //     ub.clone().unwrap()
-                // );
                 if let Some(ua) = ua.as_mut() {
-                    t = t * ua.clone();
-                    s = s * ub.unwrap();
+                    t *= &*ua;
+                    s *= ub.unwrap();
 
                     *ua = &t + &s;
                 }
@@ -170,8 +154,6 @@ pub fn extended_gcd(
                 }
             }
             a.digits_mut()[0] = a_word;
-
-            // println!("\ta: {} - {}", &a, a_word)
         }
     }
 
@@ -209,15 +191,6 @@ fn lehmer_simulate(a: &BigInt, b: &BigInt) -> (BigDigit, BigDigit, BigDigit, Big
 
     // extract the top word of bits from a and b
     let h = a.digits()[n - 1].leading_zeros();
-    // println!(
-    //     "digits: {:?} {} {} {} {} {:?}",
-    //     a.digits(),
-    //     BITS,
-    //     a.digits()[n - 1] << h,
-    //     a.digits()[n - 2],
-    //     BITS as u32 - h,
-    //     (a.digits()[n - 2] as DoubleBigDigit) >> (BITS as u32 - h),
-    // );
 
     let mut a1: BigDigit = a.digits()[n - 1] << h
         | ((a.digits()[n - 2] as DoubleBigDigit) >> (BITS as u32 - h)) as BigDigit;
@@ -290,9 +263,8 @@ fn lehmer_update(
         s.sign = Plus;
     }
 
-    // TODO: why do I need to clone?
-    *t = a.clone() * t.clone();
-    *s = b.clone() * s.clone();
+    *t *= &*a;
+    *s *= &*b;
 
     r.data.set_digit(u1);
     q.data.set_digit(v1);
@@ -304,9 +276,8 @@ fn lehmer_update(
         r.sign = Plus;
     }
 
-    // TODO: why do I need to clone?
-    *r = a.clone() * r.clone();
-    *q = b.clone() * q.clone();
+    *r *= &*a;
+    *q *= &*b;
 
     *a = t + s;
     *b = r + q;
@@ -327,25 +298,16 @@ fn euclid_udpate(
     *q = q_new;
     *r = r_new;
 
-    // *a = *b;
-    // *b = *r;
-    // *r = *a;
-    // std::mem::swap(a, b);
-    // std::mem::swap(b, r);
-    // TODO: avoid cloning
-    let old_a = a.clone();
-    *a = b.clone();
-    *b = r.clone();
-    *r = old_a;
+    std::mem::swap(a, b);
+    std::mem::swap(b, r);
 
     if extended {
         // ua, ub = ub, ua - q * ub
         if let Some(ub) = ub.as_mut() {
             if let Some(ua) = ua.as_mut() {
-                // TODO: figure out how to avoid these clonese
                 *t = ub.clone();
-                *s = ub.clone() * q.clone();
-                *ub = ua.clone() - s.clone();
+                *s = &*ub * &*q;
+                *ub = &*ua - &*s;
                 *ua = t.clone();
             }
         }
