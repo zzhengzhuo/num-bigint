@@ -865,6 +865,19 @@ impl<'a, 'b> Mul<&'b BigUint> for &'a BigUint {
         mul3(&self.data[..], &other.data[..])
     }
 }
+
+impl<'a, 'b> Mul<&'a BigInt> for &'b BigUint {
+    type Output = BigInt;
+
+    #[inline]
+    fn mul(self, other: &BigInt) -> BigInt {
+        BigInt {
+            data: mul3(&self.data[..], &other.digits()[..]),
+            sign: other.sign,
+        }
+    }
+}
+
 impl<'a> MulAssign<&'a BigUint> for BigUint {
     #[inline]
     fn mul_assign(&mut self, other: &'a BigUint) {
@@ -3147,14 +3160,27 @@ fn test_u128_u32_roundtrip() {
 impl<'a> ModInverse<&'a BigUint> for BigUint {
     type Output = BigInt;
     fn mod_inverse(self, m: &'a BigUint) -> Option<BigInt> {
-        mod_inverse(Cow::Owned(self), m)
+        mod_inverse(Cow::Owned(self), Cow::Borrowed(m))
+    }
+}
+
+impl ModInverse<BigUint> for BigUint {
+    type Output = BigInt;
+    fn mod_inverse(self, m: BigUint) -> Option<BigInt> {
+        mod_inverse(Cow::Owned(self), Cow::Owned(m))
     }
 }
 
 impl<'a> ModInverse<&'a BigInt> for BigUint {
     type Output = BigInt;
     fn mod_inverse(self, m: &'a BigInt) -> Option<BigInt> {
-        mod_inverse(Cow::Owned(self), &m.to_biguint().unwrap())
+        mod_inverse(Cow::Owned(self), Cow::Owned(m.to_biguint().unwrap()))
+    }
+}
+impl ModInverse<BigInt> for BigUint {
+    type Output = BigInt;
+    fn mod_inverse(self, m: BigInt) -> Option<BigInt> {
+        mod_inverse(Cow::Owned(self), Cow::Owned(m.into_biguint().unwrap()))
     }
 }
 
@@ -3162,7 +3188,15 @@ impl<'a, 'b> ModInverse<&'b BigUint> for &'a BigUint {
     type Output = BigInt;
 
     fn mod_inverse(self, m: &'b BigUint) -> Option<BigInt> {
-        mod_inverse(Cow::Borrowed(self), m)
+        mod_inverse(Cow::Borrowed(self), Cow::Borrowed(m))
+    }
+}
+
+impl<'a> ModInverse<BigUint> for &'a BigUint {
+    type Output = BigInt;
+
+    fn mod_inverse(self, m: BigUint) -> Option<BigInt> {
+        mod_inverse(Cow::Borrowed(self), Cow::Owned(m))
     }
 }
 
@@ -3170,7 +3204,7 @@ impl<'a, 'b> ModInverse<&'b BigInt> for &'a BigUint {
     type Output = BigInt;
 
     fn mod_inverse(self, m: &'b BigInt) -> Option<BigInt> {
-        mod_inverse(Cow::Borrowed(self), &m.to_biguint().unwrap())
+        mod_inverse(Cow::Borrowed(self), Cow::Owned(m.to_biguint().unwrap()))
     }
 }
 

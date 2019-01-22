@@ -8,8 +8,8 @@ use crate::{BigInt, BigUint};
 /// Calculate the modular inverse of `g`.
 /// Implementation is based on the naive version from wikipedia.
 #[inline]
-pub fn mod_inverse(g: Cow<BigUint>, n: &BigUint) -> Option<BigInt> {
-    let (d, x, _) = extended_gcd(g, Cow::Borrowed(n), true);
+pub fn mod_inverse(g: Cow<BigUint>, n: Cow<BigUint>) -> Option<BigInt> {
+    let (d, x, _) = extended_gcd(g, n.clone(), true);
 
     if !d.is_one() {
         return None;
@@ -18,7 +18,7 @@ pub fn mod_inverse(g: Cow<BigUint>, n: &BigUint) -> Option<BigInt> {
     let x = x.unwrap();
 
     if x.is_negative() {
-        Some(x + n)
+        Some(x + n.as_ref())
     } else {
         Some(x)
     }

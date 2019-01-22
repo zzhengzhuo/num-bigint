@@ -3159,9 +3159,9 @@ impl<'a> ModInverse<&'a BigUint> for BigInt {
                 .mod_floor(&m.to_bigint().unwrap())
                 .into_biguint()
                 .unwrap();
-            mod_inverse(Cow::Owned(v), m)
+            mod_inverse(Cow::Owned(v), Cow::Borrowed(m))
         } else {
-            mod_inverse(Cow::Owned(self.into_biguint().unwrap()), m)
+            mod_inverse(Cow::Owned(self.into_biguint().unwrap()), Cow::Borrowed(m))
         }
     }
 }
@@ -3171,11 +3171,11 @@ impl<'a> ModInverse<&'a BigInt> for BigInt {
     fn mod_inverse(self, m: &'a BigInt) -> Option<BigInt> {
         if self.is_negative() {
             let v = self.mod_floor(m).into_biguint().unwrap();
-            mod_inverse(Cow::Owned(v), &m.to_biguint().unwrap())
+            mod_inverse(Cow::Owned(v), Cow::Owned(m.to_biguint().unwrap()))
         } else {
             mod_inverse(
                 Cow::Owned(self.into_biguint().unwrap()),
-                &m.to_biguint().unwrap(),
+                Cow::Owned(m.to_biguint().unwrap()),
             )
         }
     }
@@ -3190,9 +3190,9 @@ impl<'a, 'b> ModInverse<&'b BigUint> for &'a BigInt {
                 .mod_floor(&m.to_bigint().unwrap())
                 .into_biguint()
                 .unwrap();
-            mod_inverse(Cow::Owned(v), m)
+            mod_inverse(Cow::Owned(v), Cow::Borrowed(m))
         } else {
-            mod_inverse(Cow::Owned(self.to_biguint().unwrap()), m)
+            mod_inverse(Cow::Owned(self.to_biguint().unwrap()), Cow::Borrowed(m))
         }
     }
 }
@@ -3203,11 +3203,11 @@ impl<'a, 'b> ModInverse<&'b BigInt> for &'a BigInt {
     fn mod_inverse(self, m: &'b BigInt) -> Option<BigInt> {
         if self.is_negative() {
             let v = self.mod_floor(m).into_biguint().unwrap();
-            mod_inverse(Cow::Owned(v), &m.to_biguint().unwrap())
+            mod_inverse(Cow::Owned(v), Cow::Owned(m.to_biguint().unwrap()))
         } else {
             mod_inverse(
                 Cow::Owned(self.to_biguint().unwrap()),
-                &m.to_biguint().unwrap(),
+                Cow::Owned(m.to_biguint().unwrap()),
             )
         }
     }
