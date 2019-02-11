@@ -271,8 +271,7 @@ fn remainder_a(x: &BigUint, q: BigDigit, qinv: BigDigit) -> BigDigit {
 
     // Final multiply to radix scale the remainder
     let n = x.data.len();
-    let (j, p, bm) = calc_bitmap(n + 1);
-    let r_scaled = radix_power(n + 1, j, p, bm, q, qinv);
+    let r_scaled = radix_power(n + 1, q, qinv);
     mont_mul(cy, r_scaled, q, qinv)
 }
 
@@ -323,8 +322,7 @@ fn remainder_a_u2(x: &BigUint, q: BigDigit, qinv: BigDigit) -> BigDigit {
     }
 
     // P * R = R**n2+1 (mod q)
-    let (j, p, bm) = calc_bitmap(n2 + 1);
-    let scale = radix_power(n2 + 1, j, p, bm, q, qinv);
+    let scale = radix_power(n2 + 1, q, qinv);
 
     cy1 = mont_mul(cy1, scale, q, qinv);
 
@@ -409,7 +407,7 @@ fn calc_bitmap(n: usize) -> (usize, usize, u32) {
 /// Computes `R**n (mod q)`.
 /// - `pow = R**2 (mod q)`
 /// - `q * qinv = 1 (mod 2**BITS)`, `q` is odd.
-fn radix_power(n: usize, j: usize, p: usize, bm: u32, q: BigDigit, qinv: BigDigit) -> BigDigit {
+fn radix_power(n: usize, q: BigDigit, qinv: BigDigit) -> BigDigit {
     // TODO: Constant
     let r = 2u128.pow(big_digit::BITS as u32) % q as u128;
     // TODO: implement optimized squaring algorithm
@@ -425,6 +423,8 @@ fn radix_power(n: usize, j: usize, p: usize, bm: u32, q: BigDigit, qinv: BigDigi
     if n == 3 {
         return ptmp;
     }
+
+    let (j, p, bm) = calc_bitmap(n);
 
     let mut pow = if p == 4 {
         mont_mul(r2, ptmp, q, qinv)
@@ -487,8 +487,7 @@ fn remainder_b(x: &BigUint, q: BigDigit, qinv: BigDigit) -> BigDigit {
 
     // Final multiply to radix scale the remainder
     let n = x.data.len();
-    let (j, p, bm) = calc_bitmap(n);
-    let r_scaled = radix_power(n, j, p, bm, q, qinv);
+    let r_scaled = radix_power(n, q, qinv);
 
     mont_mul(lo, r_scaled, q, qinv)
 }
@@ -504,24 +503,6 @@ fn usqr_lohi(x: BigDigit) -> (BigDigit, BigDigit) {
 #[inline(always)]
 fn umulh(x: BigDigit, y: BigDigit) -> BigDigit {
     big_digit::get_hi(x as DoubleBigDigit * y as DoubleBigDigit)
-}
-
-/// Calculate the remainder.
-pub fn remainder_odd(x: &BigUint, q: BigDigit, qinv: BigDigit) -> BigDigit {
-    let n = x.data.len() as usize;
-
-    let (_, _, bm) = calc_bitmap(n);
-    let (_, _, bm1) = calc_bitmap(n + 1);
-
-    // if the even element has fewer set bits than the odd, use a, otherwise b
-    // TODO: use A for odd, B for even
-    if bm.count_ones() < bm1.count_ones() {
-        // Algorithm B
-        remainder_b(x, q, qinv)
-    } else {
-        // Algorithm A
-        remainder_a_u2(x, q, qinv)
-    }
 }
 
 /// Calculate the quotient and remainder of `x / q`.
@@ -573,7 +554,7 @@ pub fn rem_digit(x: &BigUint, q: BigDigit) -> BigDigit {
 
     if q & 1 == 1 {
         let qinv = mod_inv1(q);
-        remainder_odd(&x, q, qinv)
+        remainder_a_u2(&x, q, qinv)
     } else {
         let tz = q.trailing_zeros();
         let bsave = x.data[0] & ((2 as BigDigit).pow(tz) - 1);
@@ -583,7 +564,7 @@ pub fn rem_digit(x: &BigUint, q: BigDigit) -> BigDigit {
         let qinv_dash = mod_inv1(q_dash);
         let x_dash = x >> tz as usize;
 
-        let r_dash = remainder_odd(&x_dash, q_dash, qinv_dash);
+        let r_dash = remainder_b(&x_dash, q_dash, qinv_dash);
 
         (r_dash << tz as usize) + bsave
     }
@@ -604,7 +585,7 @@ pub fn div_digit(x: &mut BigUint, q: BigDigit) {
 
     if q & 1 == 1 {
         let qinv = mod_inv1(q);
-        let r = remainder_odd(&*x, q, qinv);
+        let r = remainder_a_u2(&*x, q, qinv);
 
         quotient_odd(x, r, q, qinv);
     } else {
@@ -614,7 +595,7 @@ pub fn div_digit(x: &mut BigUint, q: BigDigit) {
         let qinv_dash = mod_inv1(q_dash);
         *x >>= tz;
 
-        let r_dash = remainder_odd(&*x, q_dash, qinv_dash);
+        let r_dash = remainder_b(&*x, q_dash, qinv_dash);
 
         quotient_odd(x, r_dash, q_dash, qinv_dash);
     }
@@ -730,23 +711,10 @@ mod tests {
         let qinv = mod_inv1(q);
 
         // Algorithm A:
-        let (j, p, bm) = calc_bitmap(17);
-        let pow = radix_power(17, j, p, bm, q, qinv);
+        let pow = radix_power(17, q, qinv);
 
         let r17 = 8502984233828494641;
         assert_eq!(&pow, &r17);
-    }
-
-    #[test]
-    fn test_remainder_odd() {
-        let x: BigUint = (BigUint::from_u64(2).unwrap().pow(977u32)) - 1u32;
-        let q = 16357897499336320049;
-        let qinv = mod_inv1(q);
-
-        let expected = 8623243291871090711u64;
-        let result = remainder_odd(&x, q, qinv);
-
-        assert_eq!(expected, result);
     }
 
     #[test]
@@ -755,7 +723,7 @@ mod tests {
         let q = 16357897499336320049;
         let qinv = mod_inv1(q);
 
-        let rem = remainder_odd(&x, q, qinv);
+        let rem = remainder_a_u2(&x, q, qinv);
         quotient_odd(&mut x, rem, q, qinv);
         let expected = BigUint::from_str("78086917842225469457022075217415018633622146158582987787805457927845552003930951370242413093007381680736663345444780010948879462256334087427082857530164140957807257857039967815743361429510512762352923129675520587113443817607507240658518046987342885964515476672818868436366440").unwrap();
 
@@ -793,7 +761,7 @@ mod tests {
             q |= 1;
             let qinv = mod_inv1(q);
 
-            let rem = remainder_odd(&x, q, qinv);
+            let rem = remainder_a_u2(&x, q, qinv);
             assert_eq!(x_orig % q, rem);
         }
     }

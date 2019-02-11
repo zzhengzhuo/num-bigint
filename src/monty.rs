@@ -1,33 +1,20 @@
-use num_traits::{One, Zero};
 use std::ops::Shl;
 
-use big_digit::{self, BigDigit, DoubleBigDigit, SignedDoubleBigDigit};
-use biguint::BigUint;
+use num_traits::{One, Zero};
+
+use crate::algorithms::mod_inv1;
+use crate::big_digit::{self, BigDigit, DoubleBigDigit};
+use crate::biguint::BigUint;
 
 struct MontyReducer {
     n0inv: BigDigit,
 }
 
-// k0 = -m**-1 mod 2**BITS. Algorithm from: Dumas, J.G. "On Newton–Raphson
-// Iteration for Multiplicative Inverses Modulo Prime Powers".
-fn inv_mod_alt(b: BigDigit) -> BigDigit {
-    assert_ne!(b & 1, 0);
-
-    let mut k0 = 2 - b as SignedDoubleBigDigit;
-    let mut t = (b - 1) as SignedDoubleBigDigit;
-    let mut i = 1;
-    while i < big_digit::BITS {
-        t = t.wrapping_mul(t);
-        k0 = k0.wrapping_mul(t + 1);
-
-        i <<= 1;
-    }
-    -k0 as BigDigit
-}
-
 impl MontyReducer {
     fn new(n: &BigUint) -> Self {
-        let n0inv = inv_mod_alt(n.data[0]);
+        let ninv = mod_inv1(n.data[0]);
+        // flip sign
+        let n0inv = (!ninv) + 1;
         MontyReducer { n0inv }
     }
 }

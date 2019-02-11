@@ -46,7 +46,7 @@ const PRIME_BIT_MASK: u64 = 1 << 2
 /// ProbablyPrime reports whether x is probably prime,
 /// applying the Miller-Rabin test with n pseudorandomly chosen bases
 /// as well as a Baillie-PSW test.
-//
+///
 /// If x is prime, ProbablyPrime returns true.
 /// If x is chosen randomly and not prime, ProbablyPrime probably returns false.
 /// The probability of returning true for a randomly chosen non-prime is at most ¼ⁿ.
@@ -436,21 +436,6 @@ fn get_bit(x: &BigUint, i: usize) -> u8 {
 
     (x.get_limb(j) >> (i % big_digit::BITS) & 1) as u8
 }
-
-// pub fn big_prime(size: uint) -> BigUint {
-//   let one: BigUint = One::one();
-//   let two = one + one;
-
-//   let mut rng = task_rng();
-//   let mut candidate = rng.gen_biguint(size);
-//   if candidate.is_even() {
-//     candidate = candidate + one;
-//   }
-//   while !is_prime(&candidate) {
-//     candidate = candidate + two;
-//   }
-//   candidate
-// }
 
 #[cfg(test)]
 mod tests {
