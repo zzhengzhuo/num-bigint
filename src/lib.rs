@@ -104,6 +104,8 @@ extern crate num_traits;
 #[cfg(feature = "prime")]
 extern crate byteorder;
 
+extern crate bit_field;
+
 use std::error::Error;
 use std::fmt;
 
@@ -232,11 +234,11 @@ mod big_digit {
     const LO_MASK: DoubleBigDigit = (-1i64 as DoubleBigDigit) >> BITS;
 
     #[inline]
-    fn get_hi(n: DoubleBigDigit) -> BigDigit {
+    pub fn get_hi(n: DoubleBigDigit) -> BigDigit {
         (n >> BITS) as BigDigit
     }
     #[inline]
-    fn get_lo(n: DoubleBigDigit) -> BigDigit {
+    pub fn get_lo(n: DoubleBigDigit) -> BigDigit {
         (n & LO_MASK) as BigDigit
     }
 

@@ -154,23 +154,21 @@ pub fn monty_modpow(x: &BigUint, y: &BigUint, m: &BigUint) -> BigUint {
     // powers[i] contains x^i
     let mut powers = Vec::with_capacity(1 << n);
 
-    let mut v1 = BigUint::zero();
+    let mut v1 = BigUint::with_capacity(num_words);
     montgomery(&mut v1, &one, &rr, m, mr.n0inv, num_words);
     powers.push(v1);
     let mut v2 = BigUint::zero();
     montgomery(&mut v2, &x, &rr, m, mr.n0inv, num_words);
     powers.push(v2);
     for i in 2..1 << n {
-        let mut r = BigUint::zero();
+        let mut r = BigUint::with_capacity(num_words);
         montgomery(&mut r, &powers[i - 1], &powers[1], m, mr.n0inv, num_words);
         powers.push(r);
     }
 
     // initialize z = 1 (Montgomery 1)
     let mut z = powers[0].clone();
-    z.data.resize(num_words, 0);
-    let mut zz = BigUint::zero();
-    zz.data.resize(num_words, 0);
+    let mut zz = BigUint::with_capacity(num_words);
 
     // same windowed exponent, but with Montgomery multiplications
     for i in (0..y.data.len()).rev() {

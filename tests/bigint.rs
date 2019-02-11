@@ -988,7 +988,14 @@ fn test_lcm() {
         let big_b: BigInt = FromPrimitive::from_isize(b).unwrap();
         let big_c: BigInt = FromPrimitive::from_isize(c).unwrap();
 
-        assert_eq!(big_a.lcm(&big_b), big_c);
+        assert_eq!(
+            big_a.lcm(&big_b),
+            big_c,
+            "lcm({}, {}) = {}",
+            &big_a,
+            &big_b,
+            &big_c
+        );
     }
 
     check(1, 0, 0);

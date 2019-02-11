@@ -979,7 +979,14 @@ fn test_checked_div() {
         let c = BigUint::from_slice(c_vec);
 
         if !a.is_zero() {
-            assert!(c.checked_div(&a).unwrap() == b);
+            assert!(
+                c.checked_div(&a).unwrap() == b,
+                "{} {} {} {}",
+                c.checked_div(&a).unwrap(),
+                &c,
+                &a,
+                &b
+            );
         }
         if !b.is_zero() {
             assert!(c.checked_div(&b).unwrap() == a);

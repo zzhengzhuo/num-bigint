@@ -11,7 +11,7 @@ use crate::algorithms::jacobi;
 use crate::big_digit;
 use crate::bigrand::RandBigInt;
 use crate::Sign::Plus;
-use crate::{BigInt, BigUint};
+use crate::{BigInt, BigUint, IntoBigUint};
 
 lazy_static! {
     pub(crate) static ref BIG_1: BigUint = BigUint::one();
@@ -95,6 +95,87 @@ pub fn probably_prime(x: &BigUint, n: usize) -> bool {
     }
 
     probably_prime_miller_rabin(x, n + 1, true) && probably_prime_lucas(x)
+}
+
+const NUMBER_OF_PRIMES: usize = 127;
+const PRIME_GAP: [u64; 167] = [
+    2, 2, 4, 2, 4, 2, 4, 6, 2, 6, 4, 2, 4, 6, 6, 2, 6, 4, 2, 6, 4, 6, 8, 4, 2, 4, 2, 4, 14, 4, 6,
+    2, 10, 2, 6, 6, 4, 6, 6, 2, 10, 2, 4, 2, 12, 12, 4, 2, 4, 6, 2, 10, 6, 6, 6, 2, 6, 4, 2, 10,
+    14, 4, 2, 4, 14, 6, 10, 2, 4, 6, 8, 6, 6, 4, 6, 8, 4, 8, 10, 2, 10, 2, 6, 4, 6, 8, 4, 2, 4, 12,
+    8, 4, 8, 4, 6, 12, 2, 18, 6, 10, 6, 6, 2, 6, 10, 6, 6, 2, 6, 6, 4, 2, 12, 10, 2, 4, 6, 6, 2,
+    12, 4, 6, 8, 10, 8, 10, 8, 6, 6, 4, 8, 6, 4, 8, 4, 14, 10, 12, 2, 10, 2, 4, 2, 10, 14, 4, 2, 4,
+    14, 4, 2, 4, 20, 4, 8, 10, 8, 4, 6, 6, 14, 4, 6, 6, 8, 6, 12,
+];
+
+const INCR_LIMIT: usize = 0x10000;
+
+/// Calculate the next larger prime, given a starting number `n`.
+pub fn next_prime(n: &BigUint) -> BigUint {
+    if n < &*BIG_2 {
+        return 2u32.into_biguint().unwrap();
+    }
+
+    // We want something larger than our current number.
+    let mut res = n + &*BIG_1;
+
+    // Ensure we are odd.
+    res |= &*BIG_1;
+
+    // Handle values up to 7.
+    if let Some(val) = res.to_u64() {
+        if val < 7 {
+            return res;
+        }
+    }
+
+    let nbits = res.bits();
+    let prime_limit = if nbits / 2 >= NUMBER_OF_PRIMES {
+        NUMBER_OF_PRIMES - 1
+    } else {
+        nbits / 2
+    };
+
+    // Compute the residues modulo small odd primes
+    let mut moduli = vec![BigUint::zero(); prime_limit];
+
+    'outer: loop {
+        let mut prime = 3;
+        for i in 0..prime_limit {
+            moduli[i] = &res / prime;
+            prime += PRIME_GAP[i];
+        }
+
+        // Check residues
+        let mut difference: usize = 0;
+        for incr in (0..INCR_LIMIT as u64).step_by(2) {
+            let mut prime: u64 = 3;
+
+            let mut cancel = false;
+            for i in 0..prime_limit {
+                let r = (&moduli[i] + incr) % prime;
+                prime += PRIME_GAP[i];
+
+                if r.is_zero() {
+                    cancel = true;
+                    break;
+                }
+            }
+
+            if !cancel {
+                res += difference;
+                difference = 0;
+                if probably_prime(&res, 20) {
+                    break 'outer;
+                }
+            }
+
+            difference += 2;
+        }
+
+        res += difference;
+    }
+
+    res
 }
 
 /// Reports whether n passes reps rounds of the Miller-Rabin primality test, using pseudo-randomly chosen bases.
@@ -376,6 +457,8 @@ mod tests {
     use super::*;
     // use RandBigInt;
 
+    use crate::biguint::ToBigUint;
+
     lazy_static! {
         static ref PRIMES: Vec<&'static str> = vec![
         "2",
@@ -561,5 +644,25 @@ mod tests {
         assert!(is_bit_set(&num, 5));
         assert!(!is_bit_set(&num, 6));
         assert!(is_bit_set(&num, 7));
+    }
+
+    #[test]
+    fn test_next_prime() {
+        let primes1 = (0..2048u32)
+            .map(|i| next_prime(&i.to_biguint().unwrap()))
+            .collect::<Vec<_>>();
+        let primes2 = (0..2048u32)
+            .map(|i| {
+                let i = i.to_biguint().unwrap();
+                let p = next_prime(&i);
+                assert!(&p > &i);
+                p
+            })
+            .collect::<Vec<_>>();
+
+        for (p1, p2) in primes1.iter().zip(&primes2) {
+            assert_eq!(p1, p2);
+            assert!(probably_prime(p1, 25));
+        }
     }
 }

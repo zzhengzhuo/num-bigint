@@ -3,12 +3,62 @@ use std::borrow::Cow;
 use num_traits::{One, Signed};
 
 use crate::algorithms::extended_gcd;
+use crate::big_digit::BigDigit;
 use crate::{BigInt, BigUint};
+
+/// Given `q` (odd) calculates `qinv`, such that `q * qinv = 1 (mod 2**32)`.
+fn mod_inv1_u32(q: u32) -> u32 {
+    debug_assert!(q & 1 == 1, "q must be odd");
+
+    // Initial guess, at least 5 bits are correct.
+    let mut qinv = (q.wrapping_add(q).wrapping_add(q)) ^ 0x02;
+
+    // 0
+    let mut tmp = q.wrapping_mul(qinv);
+    qinv = qinv.wrapping_mul(2u32.wrapping_sub(tmp));
+
+    // 1
+    tmp = q.wrapping_mul(qinv);
+    qinv = qinv.wrapping_mul(2u32.wrapping_sub(tmp));
+
+    // 2
+    tmp = q.wrapping_mul(qinv);
+    qinv.wrapping_mul(2u32.wrapping_sub(tmp))
+}
+
+/// Given `q` calculates `qinv`, such that `q * qinv = 1 (mod 2**64)`.
+fn mod_inv1_u64(q: u64) -> u64 {
+    debug_assert!(q & 1 == 1, "q must be odd");
+
+    let qinv = mod_inv1_u32(q as u32) as u64;
+    qinv.wrapping_mul(2u64.wrapping_sub(q.wrapping_mul(qinv)))
+}
+
+/// Given `q` calculates `qinv`, such that `q * qinv = 1 (mod 2**BITS)`.
+#[cfg(feature = "u64_digit")]
+pub fn mod_inv1(q: BigDigit) -> BigDigit {
+    mod_inv1_u64(q)
+}
+
+/// Given `q` calculates `qinv`, such that `q * qinv = 1 (mod 2**BITS)`.
+#[cfg(not(feature = "u64_digit"))]
+pub fn mod_inv1(q: BigDigit) -> BigDigit {
+    mod_inv1_u32(q)
+}
 
 /// Calculate the modular inverse of `g`.
 /// Implementation is based on the naive version from wikipedia.
 #[inline]
 pub fn mod_inverse(g: Cow<BigUint>, n: Cow<BigUint>) -> Option<BigInt> {
+    if g.as_ref().data.len() == 1 && n.as_ref().data.len() == 1 {
+        let x = g.as_ref().data[0];
+        let q = n.as_ref().data[0];
+        // Odd, with a power of 2 as modulus
+        if (q & (q - 1)) == 0 && (x & 1 == 1) {
+            return Some(mod_inv1(x).into());
+        }
+    }
+
     let (d, x, _) = extended_gcd(g, n.clone(), true);
 
     if !d.is_one() {
@@ -92,4 +142,45 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn test_mod_inv1_u32() {
+        for q in (1u32..100_000).step_by(2) {
+            let qinv = mod_inv1_u32(q as u32);
+            assert_eq!(q.wrapping_mul(qinv), 1, "{} * {} != 1", q, qinv);
+        }
+    }
+
+    #[test]
+    fn test_mod_inv1_u64() {
+        let start = u32::max_value() as u64;
+        for q in (start..start + 100_000).step_by(2) {
+            let qinv = mod_inv1_u64(q as u64);
+            assert_eq!(q.wrapping_mul(qinv), 1, "{} * {} != 1", q, qinv);
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "rand")]
+    fn test_quotient_remainder() {
+        use rand::{thread_rng, Rng};
+        let mut rng = thread_rng();
+
+        for _ in 1..1000 {
+            let mut q: BigDigit = rng.gen();
+            // make odd
+            q |= 1;
+            let qinv = mod_inv1(q);
+            assert_eq!(q.wrapping_mul(qinv), 1, "{} * {} != 1", q, qinv);
+        }
+    }
+
+    // Note: this takes some time ;)
+    // #[test]
+    // fn test_mod_inv1_u64_exhaustive() {
+    //     for q in (1u64..u64::max_value()).step_by(2) {
+    //         let qinv = mod_inv1_u64(q as u64);
+    //         assert_eq!(q.wrapping_mul(qinv), 1, "{} * {} != 1", q, qinv);
+    //     }
+    // }
 }

@@ -37,7 +37,9 @@ use super::VEC_SIZE;
 use crate::algorithms::{__add2, __sub2rev, add2, sub2, sub2rev};
 use crate::algorithms::{biguint_shl, biguint_shr};
 use crate::algorithms::{cmp_slice, fls, ilog2};
-use crate::algorithms::{div_rem, div_rem_digit, mac_with_carry, mul3, scalar_mul};
+use crate::algorithms::{
+    div, div_digit, div_rem, div_rem_digit, mac_with_carry, mul3, rem, rem_digit, scalar_mul,
+};
 use crate::algorithms::{extended_gcd, mod_inverse};
 use crate::traits::{ExtendedGcd, ModInverse};
 
@@ -999,8 +1001,7 @@ impl<'a, 'b> Div<&'b BigUint> for &'a BigUint {
 
     #[inline]
     fn div(self, other: &BigUint) -> BigUint {
-        let (q, _) = self.div_rem(other);
-        q
+        div(self, other)
     }
 }
 impl<'a> DivAssign<&'a BigUint> for BigUint {
@@ -1022,14 +1023,15 @@ impl Div<u32> for BigUint {
 
     #[inline]
     fn div(self, other: u32) -> BigUint {
-        let (q, _) = div_rem_digit(self, other as BigDigit);
-        q
+        let mut res = self.clone();
+        res /= other;
+        res
     }
 }
 impl DivAssign<u32> for BigUint {
     #[inline]
     fn div_assign(&mut self, other: u32) {
-        *self = &*self / other;
+        div_digit(self, other as BigDigit);
     }
 }
 
@@ -1051,14 +1053,15 @@ impl Div<u64> for BigUint {
 
     #[inline]
     fn div(self, other: u64) -> BigUint {
-        let (q, _) = self.div_rem(&From::from(other));
-        q
+        let mut res = self.clone();
+        res /= other;
+        res
     }
 }
 impl DivAssign<u64> for BigUint {
     #[inline]
     fn div_assign(&mut self, other: u64) {
-        *self = &*self / other;
+        *self = div(self, &other.into());
     }
 }
 
@@ -1093,8 +1096,9 @@ impl Div<u128> for BigUint {
 
     #[inline]
     fn div(self, other: u128) -> BigUint {
-        let (q, _) = self.div_rem(&From::from(other));
-        q
+        let mut res = self.clone();
+        res /= other;
+        res
     }
 }
 
@@ -1102,7 +1106,7 @@ impl Div<u128> for BigUint {
 impl DivAssign<u128> for BigUint {
     #[inline]
     fn div_assign(&mut self, other: u128) {
-        *self = &*self / other;
+        *self = div(self, &other.into());
     }
 }
 
@@ -1147,14 +1151,13 @@ impl<'a, 'b> Rem<&'b BigUint> for &'a BigUint {
 
     #[inline]
     fn rem(self, other: &BigUint) -> BigUint {
-        let (_, r) = self.div_rem(other);
-        r
+        rem(&self, other)
     }
 }
 impl<'a> RemAssign<&'a BigUint> for BigUint {
     #[inline]
     fn rem_assign(&mut self, other: &BigUint) {
-        *self = &*self % other;
+        *self = rem(&*self, other).into();
     }
 }
 
@@ -1170,14 +1173,13 @@ impl Rem<u32> for BigUint {
 
     #[inline]
     fn rem(self, other: u32) -> BigUint {
-        let (_, r) = div_rem_digit(self, other as BigDigit);
-        From::from(r)
+        rem_digit(&self, other as BigDigit).into()
     }
 }
 impl RemAssign<u32> for BigUint {
     #[inline]
     fn rem_assign(&mut self, other: u32) {
-        *self = &*self % other;
+        *self = rem_digit(&*self, other as BigDigit).into();
     }
 }
 
@@ -1227,14 +1229,13 @@ impl Rem<u64> for BigUint {
 
     #[inline]
     fn rem(self, other: u64) -> BigUint {
-        let (_, r) = self.div_rem(&From::from(other));
-        r
+        rem(&self, &other.into()).into()
     }
 }
 impl RemAssign<u64> for BigUint {
     #[inline]
     fn rem_assign(&mut self, other: u64) {
-        *self = &*self % other;
+        *self = rem(&*self, &other.into()).into();
     }
 }
 
@@ -1254,8 +1255,8 @@ impl Rem<u128> for BigUint {
 
     #[inline]
     fn rem(self, other: u128) -> BigUint {
-        let (_, r) = self.div_rem(&From::from(other));
-        r
+        let other_big: BigUint = other.into();
+        self.rem(&other_big)
     }
 }
 #[cfg(has_i128)]
@@ -1338,14 +1339,12 @@ impl Integer for BigUint {
 
     #[inline]
     fn div_floor(&self, other: &BigUint) -> BigUint {
-        let (d, _) = div_rem(self, other);
-        d
+        div(self, other)
     }
 
     #[inline]
     fn mod_floor(&self, other: &BigUint) -> BigUint {
-        let (_, m) = div_rem(self, other);
-        m
+        rem(self, other)
     }
 
     #[inline]
@@ -1365,6 +1364,13 @@ impl Integer for BigUint {
     /// Calculates the Lowest Common Multiple (LCM) of the number and `other`.
     #[inline]
     fn lcm(&self, other: &BigUint) -> BigUint {
+        println!(
+            "{} {} {} {}",
+            self,
+            other,
+            self.gcd(other),
+            self / self.gcd(other)
+        );
         self / self.gcd(other) * other
     }
 
@@ -1923,12 +1929,11 @@ fn to_radix_digits_le(u: &BigUint, radix: u32) -> Vec<u8> {
     let radix = radix as BigDigit;
 
     while digits.data.len() > 1 {
-        let (q, mut r) = div_rem_digit(digits, base);
+        let mut r = div_rem_digit(&mut digits, base);
         for _ in 0..power {
             res.push((r % radix) as u8);
             r /= radix;
         }
-        digits = q;
     }
 
     let mut r = digits.data[0];
@@ -2023,6 +2028,13 @@ impl BigUint {
     #[inline]
     pub fn new_native(digits: SmallVec<[BigDigit; VEC_SIZE]>) -> BigUint {
         BigUint { data: digits }.normalized()
+    }
+
+    #[inline]
+    fn with_capacity(capacity: usize) -> BigUint {
+        BigUint {
+            data: SmallVec::with_capacity(capacity),
+        }
     }
 
     /// Creates and initializes a `BigUint`.

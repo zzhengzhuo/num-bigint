@@ -1665,8 +1665,14 @@ impl<'a, 'b> Div<&'b BigInt> for &'a BigInt {
 
     #[inline]
     fn div(self, other: &BigInt) -> BigInt {
-        let (q, _) = self.div_rem(other);
-        q
+        // r.sign == self.sign
+        let d_ui = (&self.data).div(&other.data);
+        let d = BigInt::from_biguint(self.sign, d_ui);
+        if other.is_negative() {
+            -d
+        } else {
+            d
+        }
     }
 }
 
@@ -1901,8 +1907,9 @@ impl<'a, 'b> Rem<&'b BigInt> for &'a BigInt {
 
     #[inline]
     fn rem(self, other: &BigInt) -> BigInt {
-        let (_, r) = self.div_rem(other);
-        r
+        // r.sign == self.sign
+        let r_ui = (&self.data).rem(&other.data);
+        BigInt::from_biguint(self.sign, r_ui)
     }
 }
 
@@ -2179,7 +2186,7 @@ impl Integer for BigInt {
     #[inline]
     fn div_rem(&self, other: &BigInt) -> (BigInt, BigInt) {
         // r.sign == self.sign
-        let (d_ui, r_ui) = self.data.div_mod_floor(&other.data);
+        let (d_ui, r_ui) = self.data.div_rem(&other.data);
         let d = BigInt::from_biguint(self.sign, d_ui);
         let r = BigInt::from_biguint(self.sign, r_ui);
         if other.is_negative() {
@@ -2191,19 +2198,39 @@ impl Integer for BigInt {
 
     #[inline]
     fn div_floor(&self, other: &BigInt) -> BigInt {
-        let (d, _) = self.div_mod_floor(other);
-        d
+        let (res, _) = self.div_mod_floor(other);
+        res
     }
 
     #[inline]
     fn mod_floor(&self, other: &BigInt) -> BigInt {
-        let (_, m) = self.div_mod_floor(other);
-        m
+        // m.sign == other.sign
+        let m_ui = (&self.data).rem(&other.data);
+        let m = BigInt::from_biguint(Plus, m_ui);
+        match (self.sign, other.sign) {
+            (_, NoSign) => panic!(),
+            (Plus, Plus) | (NoSign, Plus) => m,
+            (Plus, Minus) | (NoSign, Minus) => {
+                if m.is_zero() {
+                    Zero::zero()
+                } else {
+                    m + other
+                }
+            }
+            (Minus, Plus) => {
+                if m.is_zero() {
+                    Zero::zero()
+                } else {
+                    other - m
+                }
+            }
+            (Minus, Minus) => -m,
+        }
     }
 
     fn div_mod_floor(&self, other: &BigInt) -> (BigInt, BigInt) {
         // m.sign == other.sign
-        let (d_ui, m_ui) = self.data.div_rem(&other.data);
+        let (d_ui, m_ui) = self.data.div_mod_floor(&other.data);
         let d = BigInt::from_biguint(Plus, d_ui);
         let m = BigInt::from_biguint(Plus, m_ui);
         let one: BigInt = One::one();
