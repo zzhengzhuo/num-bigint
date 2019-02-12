@@ -34,7 +34,7 @@ mod monty;
 
 use self::monty::monty_modpow;
 use super::VEC_SIZE;
-use crate::algorithms::{__add2, __sub2rev, add2, sub2, sub2rev};
+use crate::algorithms::{__add2, __add_scalar, __sub2rev, add2, sub2, sub2rev};
 use crate::algorithms::{biguint_shl, biguint_shr};
 use crate::algorithms::{cmp_slice, fls, ilog2};
 use crate::algorithms::{
@@ -512,12 +512,12 @@ impl<'a> AddAssign<&'a BigUint> for BigUint {
         let carry = if self_len < other.data.len() {
             let lo_carry = __add2(&mut self.data[..], &other.data[..self_len]);
             self.data.extend_from_slice(&other.data[self_len..]);
-            __add2(&mut self.data[self_len..], &[lo_carry])
+            __add_scalar(&mut self.data[self_len..], lo_carry as BigDigit)
         } else {
             __add2(&mut self.data[..], &other.data[..])
         };
-        if carry != 0 {
-            self.data.push(carry);
+        if carry {
+            self.data.push(carry as BigDigit);
         }
     }
 }
@@ -547,9 +547,9 @@ impl AddAssign<u32> for BigUint {
                 self.data.push(0);
             }
 
-            let carry = __add2(&mut self.data, &[other as BigDigit]);
-            if carry != 0 {
-                self.data.push(carry);
+            let carry = __add_scalar(&mut self.data, other as BigDigit);
+            if carry {
+                self.data.push(carry as BigDigit);
             }
         }
     }
@@ -592,9 +592,9 @@ impl AddAssign<u64> for BigUint {
                 self.data.push(0);
             }
 
-            let carry = __add2(&mut self.data, &[other as BigDigit]);
-            if carry != 0 {
-                self.data.push(carry);
+            let carry = __add_scalar(&mut self.data, other as BigDigit);
+            if carry {
+                self.data.push(carry as BigDigit);
             }
         }
     }
@@ -651,8 +651,8 @@ impl AddAssign<u128> for BigUint {
             }
 
             let carry = __add2(&mut self.data, &[lo, hi]);
-            if carry != 0 {
-                self.data.push(carry);
+            if carry {
+                self.data.push(carry as BigDigit);
             }
         }
     }
@@ -685,7 +685,7 @@ impl<'a> Sub<BigUint> for &'a BigUint {
         if other_len < self.data.len() {
             let lo_borrow = __sub2rev(&self.data[..other_len], &mut other.data);
             other.data.extend_from_slice(&self.data[other_len..]);
-            if lo_borrow != 0 {
+            if lo_borrow {
                 sub2(&mut other.data[other_len..], &[1])
             }
         } else {
@@ -2408,8 +2408,20 @@ impl BigUint {
         Roots::nth_root(self, n)
     }
 
-    pub fn trailing_zeros(&self) -> Option<usize> {
-        trailing_zeros(self)
+    /// Returns the trailing zeros.
+    pub fn trailing_zeros(&self) -> u32 {
+        trailing_zeros(self).unwrap_or_default() as u32
+    }
+
+    /// Returns the leading zeros. `None` if this is `0`.
+    pub fn leading_zeros(&self) -> u32 {
+        self.data
+            .iter()
+            .rev()
+            .enumerate()
+            .find(|&(_, &digit)| digit != 0)
+            .map(|(i, digit)| i * big_digit::BITS + digit.trailing_zeros() as usize)
+            .unwrap_or_default() as u32
     }
 
     /// Sets the value to the provided digit, reusing internal storage.

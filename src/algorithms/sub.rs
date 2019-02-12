@@ -19,7 +19,7 @@ pub fn sbb(a: BigDigit, b: BigDigit, acc: &mut SignedDoubleBigDigit) -> BigDigit
     lo
 }
 
-pub fn sub2(a: &mut [BigDigit], b: &[BigDigit]) {
+pub fn __sub2(a: &mut [BigDigit], b: &[BigDigit]) -> bool {
     let mut borrow = 0;
 
     let len = cmp::min(a.len(), b.len());
@@ -39,16 +39,42 @@ pub fn sub2(a: &mut [BigDigit], b: &[BigDigit]) {
         }
     }
 
+    borrow != 0
+}
+
+/// Calculate `a -= b`. Fails on underflow.
+#[inline]
+pub fn sub2(a: &mut [BigDigit], b: &[BigDigit]) {
+    let borrow = __sub2(a, b);
+
     // note: we're _required_ to fail on underflow
     assert!(
-        borrow == 0 && b_hi.iter().all(|x| *x == 0),
-        "Cannot subtract b from a because b is larger than a."
+        !borrow,
+        "Cannot subtract b from a because b is larger than a.\na: {:?}\nb:{:?}",
+        a, b
     );
 }
 
-// Only for the Sub impl. `a` and `b` must have same length.
+/// Calculate `a -= b` for `b` a scalar.
 #[inline]
-pub fn __sub2rev(a: &[BigDigit], b: &mut [BigDigit]) -> BigDigit {
+pub fn __sub_scalar(a: &mut [BigDigit], b: BigDigit) -> bool {
+    let mut bw = b;
+    for ai in a.iter_mut() {
+        let (tmp, overflow) = ai.overflowing_sub(bw);
+        bw = overflow as BigDigit;
+        *ai = tmp;
+
+        if !overflow {
+            break;
+        }
+    }
+
+    bw > 0
+}
+
+// Only for the SubRev impl. `a` and `b` must have same length.
+#[inline]
+pub fn __sub2rev(a: &[BigDigit], b: &mut [BigDigit]) -> bool {
     debug_assert!(b.len() == a.len());
 
     let mut borrow = 0;
@@ -57,7 +83,7 @@ pub fn __sub2rev(a: &[BigDigit], b: &mut [BigDigit]) -> BigDigit {
         *bi = sbb(*ai, *bi, &mut borrow);
     }
 
-    borrow as BigDigit
+    borrow != 0
 }
 
 pub fn sub2rev(a: &[BigDigit], b: &mut [BigDigit]) {
@@ -73,7 +99,7 @@ pub fn sub2rev(a: &[BigDigit], b: &mut [BigDigit]) {
 
     // note: we're _required_ to fail on underflow
     assert!(
-        borrow == 0 && b_hi.iter().all(|x| *x == 0),
+        !borrow && b_hi.iter().all(|x| *x == 0),
         "Cannot subtract b from a because b is larger than a."
     );
 }

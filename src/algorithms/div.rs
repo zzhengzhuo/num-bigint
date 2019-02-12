@@ -1,11 +1,18 @@
-use bit_field::BitField;
-use num_traits::{One, Zero};
-use smallvec::SmallVec;
 use std::cmp::Ordering;
 
-use crate::algorithms::{add2, cmp_slice, mod_inv1, sub2};
+use bit_field::BitField;
+use integer::Integer;
+use num_traits::{One, Zero};
+use smallvec::SmallVec;
+
+use crate::algorithms::{
+    __add2, __add_scalar, __mul2, __sqr2, __sub2, add2, cmp_slice, mod_inv1, mul_hi, mul_lo, sub2,
+};
 use crate::big_digit::{self, BigDigit, DoubleBigDigit};
 use crate::BigUint;
+
+/// 2**54
+const TWO54FLOAT: f64 = 1.0 * 0x08000000 as f64 * 0x08000000 as f64;
 
 pub fn div(u: &BigUint, d: &BigUint) -> BigUint {
     if d.is_zero() {
@@ -164,87 +171,319 @@ pub fn div_rem(u: &BigUint, d: &BigUint) -> (BigUint, BigUint) {
         Ordering::Greater => {} // Do nothing
     }
 
-    // This algorithm is from Knuth, TAOCP vol 2 section 4.3, algorithm D:
-    //
-    // First, normalize the arguments so the highest bit in the highest digit of the divisor is
-    // set: the main loop uses the highest digit of the divisor for generating guesses, so we
-    // want it to be the largest number we can efficiently divide by.
-    //
-    let shift = d.data.last().unwrap().leading_zeros() as usize;
-    let mut a = u << shift;
-    let b = d << shift;
+    div_rem_mont(u, d)
+}
 
-    // The algorithm works by incrementally calculating "guesses", q0, for part of the
-    // remainder. Once we have any number q0 such that q0 * b <= a, we can set
-    //
-    //     q += q0
-    //     a -= q0 * b
-    //
-    // and then iterate until a < b. Then, (q, a) will be our desired quotient and remainder.
-    //
-    // q0, our guess, is calculated by dividing the last few digits of a by the last digit of b
-    // - this should give us a guess that is "close" to the actual quotient, but is possibly
-    // greater than the actual quotient. If q0 * b > a, we simply use iterated subtraction
-    // until we have a guess such that q0 * b <= a.
-    //
+fn div_rem_mont(x: &BigUint, y: &BigUint) -> (BigUint, BigUint) {
+    panic!("not ready");
+    let len_x = x.data.len();
+    if len_x == y.data.len() {
+        // First attempt at fast-mod based on FP approximation of the quotient `x/y`,
+        // which switches to binary for `x/y > 2**53`.
 
-    let bn = *b.data.last().unwrap();
-    let q_len = a.data.len() - b.data.len() + 1;
-    let mut q = BigUint {
-        data: smallvec![0; q_len],
-    };
+        let (lo, i) = get_leading_bits(x);
+        let (itmp, j) = get_leading_bits(y);
+        let bw = 1 << (i - j);
+        let ncmax = 16;
 
-    // We reuse the same temporary to avoid hitting the allocator in our inner loop - this is
-    // sized to hold a0 (in the common case; if a particular digit of the quotient is zero a0
-    // can be bigger).
-    //
-    let mut tmp = BigUint {
-        data: SmallVec::with_capacity(2),
-    };
+        // Power-of-2 sacaling needed on ratio of left justified leading bits.
+        // TODO: Use FloatBigDigit
+        let fquo = (bw as f64) * (lo as f64 / itmp as f64);
 
-    for j in (0..q_len).rev() {
-        /*
-         * When calculating our next guess q0, we don't need to consider the digits below j
-         * + b.data.len() - 1: we're guessing digit j of the quotient (i.e. q0 << j) from
-         * digit bn of the divisor (i.e. bn << (b.data.len() - 1) - so the product of those
-         * two numbers will be zero in all digits up to (j + b.data.len() - 1).
-         */
-        let offset = j + b.data.len() - 1;
-        if offset >= a.data.len() {
-            continue;
+        // NOTE: only needed when calculating the remainder.
+        if fquo < TWO54FLOAT {
+            let mut itmp = fquo as BigDigit;
+            let yinv = y * &itmp;
+            let mut r = x.clone();
+            let bw = __sub2(&mut r.data, &yinv.data);
+
+            // If `bw == true` we need an additional correction, `+= y`.
+            // nc tracks the number of correction steps needed
+            let mut nc = 0;
+            if bw {
+                while (nc < ncmax) && y < &r {
+                    nc += 1;
+                    __add2(&mut r.data, &y.data);
+
+                    // decr quotient by 1 to account for extra add-y
+                    itmp -= 1;
+                }
+            } else {
+                while (nc < ncmax) && &r > y {
+                    nc += 1;
+                    __sub2(&mut r.data, &y.data);
+
+                    // inc quotient by 1 for extra sub-y
+                    itmp += 1;
+                }
+            }
+
+            debug_assert!(nc < ncmax);
+            debug_assert!(&r < y, "remainder should be less than the modulus");
+
+            return (itmp.into(), r.into());
         }
 
-        /* just avoiding a heap allocation: */
-        let mut q0 = tmp;
-        q0.data.truncate(0);
-        q0.data.extend_from_slice(&a.data[offset..]);
-
-        /*
-         * q0 << j * big_digit::BITS is our actual quotient estimate - we do the shifts
-         * implicitly at the end, when adding and subtracting to a and q. Not only do we
-         * save the cost of the shifts, the rest of the arithmetic gets to work with
-         * smaller numbers.
-         */
-        // let (mut q0, _) = div_rem_digit(a0, bn);
-        div_digit(&mut q0, bn);
-        let mut prod = &b * &q0;
-
-        while cmp_slice(&prod.data[..], &a.data[j..]) == Ordering::Greater {
-            let one: BigUint = One::one();
-            q0 = q0 - one;
-            prod = prod - &b;
-        }
-
-        add2(&mut q.data[j..], &q0.data[..]);
-        sub2(&mut a.data[j..], &prod.data[..]);
-        a.normalize();
-
-        tmp = q0;
+        return div_rem_binary(x, y);
     }
 
-    debug_assert!(a < b);
+    // Modulus must be odd for Montgomery.
+    let nshift = y.trailing_zeros() as usize;
 
-    (q.normalized(), a >> shift)
+    let mut x_adj: BigUint;
+    let mut y_adj: BigUint;
+    let mut rem_save = BigUint::zero();
+
+    let (v, w) = if nshift > 0 {
+        let nws = (nshift + big_digit::BITS - 1) >> 6; // TODO: adjust for 32bit
+        let nbs = nshift & (big_digit::BITS - 1);
+
+        // Save the bottom nshifts of x
+        let mask = (-1i64 as BigDigit) >> (big_digit::BITS - nbs);
+        rem_save.data.extend_from_slice(&x.data[..nws]);
+        rem_save.data[nws - 1] &= mask;
+
+        x_adj = x >> nshift;
+        y_adj = y >> nshift;
+
+        (&x_adj, &y_adj)
+    } else {
+        (x, y)
+    };
+
+    // Short cut for single odd-component divisor.
+    if w.data.len() == 1 {
+        let mut q = v.clone();
+        let mut rem: BigUint = div_rem_digit(&mut q, w.data[0]).into();
+
+        // Restore for the even case
+        if nshift > 0 {
+            rem <<= nshift;
+            __add2(&mut rem.data, &rem_save.data);
+        }
+
+        return (q, rem);
+    }
+
+    // The actual core of this function.
+
+    // We require a modular inverse of w for modmul using montgomery.
+    let winv = mod_invn(w);
+
+    // Process `v` in `w` len sized chunks. If the last chunk does not fit properly it gets special handling at the end.
+
+    let v_len = v.data.len();
+    let w_len = w.data.len();
+    // lo: [..w_len], hi: [w_len..]
+    let mut lohi = vec![0; 2 * w_len];
+
+    for i in (0..(v_len + w_len - 1)).step_by(w_len) {
+        let mut tmp = v.data[i..i + w_len].to_vec();
+        let bw = __sub2(&mut tmp, &lohi[w_len..]);
+
+        // Montgomery mul step: cy = UMULH(w, MULL(tmp, yinv))
+        mul_lo(&mut lohi[..w_len], &winv.data[..w_len]);
+        assert!(!__add_scalar(&mut tmp, bw as BigDigit));
+
+        // lo:hi = MUL_LOHI(w, tmp)
+        __mul2(&mut lohi[..w_len], &w.data);
+    }
+
+    // Special handling for the last term.
+    let i = v_len + w_len - 1;
+    let j = v_len - i;
+    let mut cy = BigUint {
+        data: smallvec![0; w_len],
+    };
+
+    if j > 0 {
+        // Zero pad the last element from v into cy.
+        cy.data[..j].copy_from_slice(&v.data[i..]);
+
+        let bw = __sub2(&mut cy.data, &lohi[w_len..]);
+        if bw {
+            __add2(&mut cy.data, &w.data);
+        }
+    } else {
+        cy.data.copy_from_slice(&lohi[..w_len]);
+    }
+
+    // Transform back out of Montgomery space.
+    //   calculate R**w_len
+    let basepow = radix_power_n(w_len, &w, &winv);
+    //  multiply the residue in `cy` with `basepow`
+    let mut cy = mont_mul_n(&cy, &basepow, &w, &winv);
+
+    // Calculate quotient, now that we have the remainder.
+    let mut q = SmallVec::with_capacity(w_len);
+    lohi[w_len..].copy_from_slice(&cy.data[..w_len]);
+    for i in (0..v_len + w_len + 1).step_by(w_len) {
+        let mut tmp = v.data[i..i + w_len].to_vec();
+        let bw = __sub2(&mut tmp, &lohi[w_len..]);
+
+        // Montgomery mul step
+        mul_lo(&mut lohi[..w_len], &winv.data);
+
+        __mul2(&mut lohi[..w_len], &w.data);
+        lohi[w_len] += bw as BigDigit;
+        debug_assert!(lohi[w_len] >= bw as BigDigit, "carry issue");
+
+        // this is the y[i] = tmp step in the scalar routine
+        q.extend_from_slice(&lohi[..w_len]);
+    }
+
+    // handle last step, for non dividing cases
+    let i = v_len + w_len + 1;
+    let j = v_len - i;
+    if j > 0 {
+        // clear q[i..j]
+        q.truncate(i);
+    }
+
+    // Adjust remainder for even modulus.
+    if nshift > 0 {
+        cy <<= nshift;
+        __add2(&mut cy.data, &rem_save.data);
+    }
+
+    (BigUint { data: q }.normalized(), cy.normalized())
+}
+
+/// Computes `R**n (mod q)`.
+/// - `pow = R**2 (mod q)`
+/// - `q * qinv = 1 (mod 2**BITS)`, `q` is odd.
+fn radix_power_n(n: usize, q: &BigUint, qinv: &BigUint) -> BigUint {
+    let len = q.data.len();
+    let mut r = BigUint {
+        data: smallvec![0; 2 * len],
+    };
+    r.data[2 * len - 1] = 0x800000000000000;
+
+    // tmp = R**2 / 2 mod q
+    let (_, tmp) = div_rem_binary(&r, q);
+
+    // mod double
+    let mut r2 = tmp << 1;
+    if &r2 > q {
+        r2 -= q
+    }
+
+    if n == 2 {
+        return r2;
+    }
+
+    // R**3 (mod q)
+
+    if n == 3 {
+        return mont_sqr_n(&r2, q, qinv);
+    }
+
+    let mut bm = 0u32;
+    let mut j = 0;
+    let mut n = n;
+    while n > 5 {
+        bm.set_bit(j, is_even(n));
+        n = (n / 2) + 1;
+        j += 1;
+    }
+
+    let r3 = mont_sqr_n(&r2, q, qinv);
+
+    let mut pow = if n == 4 {
+        mont_mul_n(&r2, &r3, q, qinv)
+    } else if n == 5 {
+        mont_sqr_n(&r3, q, qinv)
+    } else {
+        unreachable!("bad power of p")
+    };
+
+    for i in (0..j).rev() {
+        if bm.get_bit(i) {
+            // Reduce R-power by 1
+            let tmp = mmul_one_n(&pow, q, qinv);
+
+            // and multiply
+            pow = mont_mul_n(&tmp, &pow, q, qinv);
+        } else {
+            pow = mont_sqr_n(&pow, q, qinv);
+        }
+    }
+
+    pow
+}
+
+/// Calculates the modular inverse of `x` , such that `x * xinv = 1 (mod 2**BITS)`.
+/// `x` must be `odd`.
+/// Uses Netwon iterations to do so.
+fn mod_invn(x: &BigUint) -> BigUint {
+    debug_assert!(x.is_odd());
+
+    let xbits = x.data.len() << 6; // TODO: adjust for 32bit
+    let log2_numbits = ((1.0 * xbits as f64) / (2.0f64.ln())).ceil() as usize;
+
+    let mut xinv = BigUint {
+        data: SmallVec::with_capacity(x.data.len()),
+    };
+
+    // inverse for one limb
+    xinv.data.push(mod_inv1(x.data[0]));
+
+    // calculate the other limbs, we double the good limbs each iteration.
+
+    let mut tmp: SmallVec<_>;
+
+    for _ in 6..log2_numbits {
+        tmp = x.data.clone();
+        mul_lo(&mut tmp, &xinv.data);
+        nega(&mut tmp);
+        __add_scalar(&mut tmp, 2);
+        mul_lo(&mut xinv.data, &tmp);
+    }
+
+    xinv.normalized()
+}
+
+/// Arithmetic negation, based on `-x = !x + 1`.
+fn nega(x: &mut [BigDigit]) {
+    negl(x);
+    __add_scalar(x, 1);
+}
+
+/// Logical negation.
+fn negl(x: &mut [BigDigit]) {
+    for xi in x.iter_mut() {
+        *xi = !*xi;
+    }
+}
+
+fn div_rem_binary(x: &BigUint, y: &BigUint) -> (BigUint, BigUint) {
+    unimplemented!("div_rem_binary");
+}
+
+/// Extract the leading `BITS` bits from `x`.
+fn get_leading_bits(x: &BigUint) -> (BigDigit, usize) {
+    let len = x.data.len();
+    let nshift = x.leading_zeros() as usize;
+    let nwshift = nshift >> 6; // TODO: adjust for 32bit
+    let rembits = nshift & (big_digit::BITS - 1);
+
+    if nwshift >= len {
+        return (0, 0);
+    }
+
+    let i = len - 1 - nwshift;
+
+    let bits = if rembits > 0 {
+        let mut bits = x.data[i] << rembits;
+        if i > 0 {
+            bits += x.data[i - 1] >> (big_digit::BITS - rembits);
+        }
+        bits
+    } else {
+        x.data[i]
+    };
+
+    (bits, (len << 6) - nshift)
 }
 
 /// Returns the scaled remainder, `s = x * R**-n (mod q)`
@@ -356,6 +595,15 @@ fn mont_mul(x: BigDigit, y: BigDigit, q: BigDigit, qinv: BigDigit) -> BigDigit {
     }
 }
 
+/// Calculate the montgomery product `x * y * R**-1 (mod q)`,
+/// with `R = 2**b`.
+/// `q * qinv = 1 (mod 2**b)`, `q` is odd.
+fn mont_mul_n(x: &BigUint, y: &BigUint, q: &BigUint, qinv: &BigUint) -> BigUint {
+    debug_assert!(q.is_odd());
+
+    unimplemented!("");
+}
+
 /// Calculate the montgomery square `x**2 * R**-1 (mod q)`,
 /// with `R = 2**b`.
 /// `q * qinv = 1 (mod 2**b)`, `q` is odd.
@@ -374,6 +622,30 @@ fn mont_sqr(x: BigDigit, q: BigDigit, qinv: BigDigit) -> BigDigit {
     }
 }
 
+/// Calculate the montgomery square `x**2 * R**-1 (mod q)`,
+/// with `R = 2**b`.
+/// `q * qinv = 1 (mod 2**b)`, `q` is odd.
+fn mont_sqr_n(x: &BigUint, q: &BigUint, qinv: &BigUint) -> BigUint {
+    debug_assert!(q.is_odd());
+    let len = x.data.len();
+
+    let mut lohi = x.data.clone();
+    lohi.resize(2 * len, 0);
+    __sqr2(&mut lohi);
+
+    let (lo, hi) = lohi.split_at_mut(len);
+
+    mul_lo(lo, &qinv.data);
+    mul_hi(lo, &q.data);
+
+    let bw = __sub2(hi, &*lo);
+    if bw {
+        __add2(hi, &q.data);
+    }
+
+    BigUint::new_native(hi.to_vec().into())
+}
+
 /// Calculate the montgomery multiply by unity `x * R**-1 (mod q)`,
 /// with `R = 2**b`.
 /// `q * qinv = 1 (mod 2**b)`, `q` is odd.
@@ -388,6 +660,15 @@ fn mmul_one(x: BigDigit, q: BigDigit, qinv: BigDigit) -> BigDigit {
     } else {
         lo
     }
+}
+
+/// Calculate the montgomery multiply by unity `x * R**-1 (mod q)`,
+/// with `R = 2**b`.
+/// `q * qinv = 1 (mod 2**b)`, `q` is odd.
+fn mmul_one_n(x: &BigUint, q: &BigUint, qinv: &BigUint) -> BigUint {
+    debug_assert!(q.is_odd());
+
+    unimplemented!("");
 }
 
 fn calc_bitmap(n: usize) -> (usize, usize, u32) {

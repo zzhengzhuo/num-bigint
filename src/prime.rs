@@ -186,7 +186,7 @@ pub fn probably_prime_miller_rabin(n: &BigUint, reps: usize, force2: bool) -> bo
     // println!("miller-rabin: {}", n);
     let nm1 = n - &*BIG_1;
     // determine q, k such that nm1 = q << k
-    let k = nm1.trailing_zeros().unwrap();
+    let k = nm1.trailing_zeros() as usize;
     let q = &nm1 >> k;
     let nm3 = n - &*BIG_3;
 
@@ -320,7 +320,7 @@ pub fn probably_prime_lucas(n: &BigUint) -> bool {
     //
     // Arrange s = (n - Jacobi(Δ, n)) / 2^r = (n+1) / 2^r.
     let mut s = n + &*BIG_1;
-    let r = s.trailing_zeros().unwrap();
+    let r = s.trailing_zeros() as usize;
     s = &s >> r;
     let nm2 = n - &*BIG_2; // n - 2
 
