@@ -21,6 +21,9 @@ pub fn sbb(a: BigDigit, b: BigDigit, acc: &mut SignedDoubleBigDigit) -> BigDigit
 
 pub fn __sub2(a: &mut [BigDigit], b: &[BigDigit]) -> bool {
     let mut borrow = 0;
+    if a.is_empty() {
+        return true;
+    }
 
     let len = cmp::min(a.len(), b.len());
     let (a_lo, a_hi) = a.split_at_mut(len);

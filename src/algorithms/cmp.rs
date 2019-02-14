@@ -25,6 +25,12 @@ pub fn cmp_slice(a: &[BigDigit], b: &[BigDigit]) -> Ordering {
     return Equal;
 }
 
+/// Is the given slice zero in all elements.
+#[inline]
+pub fn is_zero(x: &[BigDigit]) -> bool {
+    x.iter().all(|x| *x == 0)
+}
+
 #[cfg(test)]
 mod tests {
     use crate::BigUint;

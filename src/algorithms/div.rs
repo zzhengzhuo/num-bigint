@@ -2,11 +2,11 @@ use std::cmp::Ordering;
 
 use bit_field::BitField;
 use integer::Integer;
-use num_traits::{One, Pow, Zero};
+use num_traits::{One, Zero};
 use smallvec::SmallVec;
 
 use crate::algorithms::{
-    __add2, __add_scalar, __mul3, __sub2, add2, cmp_slice, mod_inv1, mul_hi, mul_lo, sub2,
+    __add2, __add_scalar, __mul3, __sub2, is_zero, mod_inv1, mul_hi, mul_lo, sub2rev,
 };
 use crate::big_digit::{self, BigDigit, DoubleBigDigit};
 use crate::BigUint;
@@ -15,137 +15,13 @@ use crate::BigUint;
 const TWO54FLOAT: f64 = 1.0 * 0x08000000 as f64 * 0x08000000 as f64;
 
 pub fn div(u: &BigUint, d: &BigUint) -> BigUint {
-    if d.is_zero() {
-        panic!("Cannot divide by zero");
-    }
-    if u.is_zero() {
-        return Zero::zero();
-    }
-    if d.data.len() == 1 {
-        if d.data[0] == 1 {
-            return u.clone();
-        }
-        let mut res = u.clone();
-        div_digit(&mut res, d.data[0]);
-        return res;
-    }
-
-    // This algorithm is from Knuth, TAOCP vol 2 section 4.3, algorithm D:
-    match u.cmp(d) {
-        Ordering::Less => return Zero::zero(),
-        Ordering::Equal => return One::one(),
-        Ordering::Greater => {} // Do nothing
-    }
-
-    let shift = d.data.last().unwrap().leading_zeros() as usize;
-    let mut a = u << shift;
-    let b = d << shift;
-
-    let bn = *b.data.last().unwrap();
-    let q_len = a.data.len() - b.data.len() + 1;
-    let mut q = BigUint {
-        data: smallvec![0; q_len],
-    };
-
-    let mut tmp = BigUint {
-        data: SmallVec::with_capacity(2),
-    };
-
-    for j in (0..q_len).rev() {
-        let offset = j + b.data.len() - 1;
-        if offset >= a.data.len() {
-            continue;
-        }
-
-        let mut q0 = tmp;
-        q0.data.truncate(0);
-        q0.data.extend_from_slice(&a.data[offset..]);
-
-        div_digit(&mut q0, bn);
-        let mut prod = &b * &q0;
-
-        while cmp_slice(&prod.data[..], &a.data[j..]) == Ordering::Greater {
-            let one: BigUint = One::one();
-            q0 = q0 - one;
-            prod = prod - &b;
-        }
-
-        add2(&mut q.data[j..], &q0.data[..]);
-        sub2(&mut a.data[j..], &prod.data[..]);
-        a.normalize();
-
-        tmp = q0;
-    }
-
-    debug_assert!(a < b);
-
-    q.normalized()
+    let (q, _) = div_rem(u, d);
+    q
 }
 
 pub fn rem(u: &BigUint, d: &BigUint) -> BigUint {
-    if d.is_zero() {
-        panic!("Cannot divide by zero");
-    }
-    if u.is_zero() {
-        return Zero::zero();
-    }
-    if d.data.len() == 1 {
-        if d.data[0] == 1 {
-            return Zero::zero();
-        }
-
-        return rem_digit(u, d.data[0]).into();
-    }
-
-    // This algorithm is from Knuth, TAOCP vol 2 section 4.3, algorithm D:
-    match u.cmp(d) {
-        Ordering::Less => return u.clone(),
-        Ordering::Equal => return Zero::zero(),
-        Ordering::Greater => {} // Do nothing
-    }
-
-    let shift = d.data.last().unwrap().leading_zeros() as usize;
-    let mut a = u << shift;
-    let b = d << shift;
-
-    let bn = *b.data.last().unwrap();
-    let q_len = a.data.len() - b.data.len() + 1;
-    let mut q = BigUint {
-        data: smallvec![0; q_len],
-    };
-
-    let mut tmp = BigUint {
-        data: SmallVec::with_capacity(2),
-    };
-
-    for j in (0..q_len).rev() {
-        let offset = j + b.data.len() - 1;
-        if offset >= a.data.len() {
-            continue;
-        }
-        let mut q0 = tmp;
-        q0.data.truncate(0);
-        q0.data.extend_from_slice(&a.data[offset..]);
-
-        div_digit(&mut q0, bn);
-        let mut prod = &b * &q0;
-
-        while cmp_slice(&prod.data[..], &a.data[j..]) == Ordering::Greater {
-            let one: BigUint = One::one();
-            q0 = q0 - one;
-            prod = prod - &b;
-        }
-
-        add2(&mut q.data[j..], &q0.data[..]);
-        sub2(&mut a.data[j..], &prod.data[..]);
-        a.normalize();
-
-        tmp = q0;
-    }
-
-    debug_assert!(a < b);
-
-    a >> shift
+    let (_, r) = div_rem(u, d);
+    r
 }
 
 pub fn div_rem(u: &BigUint, d: &BigUint) -> (BigUint, BigUint) {
@@ -175,8 +51,10 @@ pub fn div_rem(u: &BigUint, d: &BigUint) -> (BigUint, BigUint) {
 }
 
 fn div_rem_mont(x: &BigUint, y: &BigUint) -> (BigUint, BigUint) {
+    println!("div_rem_mont {} / {}", x, y);
     let len_x = x.data.len();
     if len_x == y.data.len() {
+        println!("fast path");
         // First attempt at fast-mod based on FP approximation of the quotient `x/y`,
         // which switches to binary for `x/y > 2**53`.
 
@@ -204,6 +82,7 @@ fn div_rem_mont(x: &BigUint, y: &BigUint) -> (BigUint, BigUint) {
                 while (nc < ncmax) && y < &r {
                     nc += 1;
                     __add2(&mut r.data, &y.data);
+                    r.normalize();
 
                     // decr quotient by 1 to account for extra add-y
                     itmp -= 1;
@@ -212,6 +91,7 @@ fn div_rem_mont(x: &BigUint, y: &BigUint) -> (BigUint, BigUint) {
                 while (nc < ncmax) && &r > y {
                     nc += 1;
                     __sub2(&mut r.data, &y.data);
+                    r.normalize();
 
                     // inc quotient by 1 for extra sub-y
                     itmp += 1;
@@ -239,7 +119,7 @@ fn div_rem_mont(x: &BigUint, y: &BigUint) -> (BigUint, BigUint) {
         let nbs = nshift & (big_digit::BITS - 1);
 
         // Save the bottom nshifts of x
-        let mask = (-1i64 as BigDigit) >> (big_digit::BITS - nbs);
+        let mask = (-1i64 as BigDigit).wrapping_shr((big_digit::BITS - nbs) as u32);
         rem_save.data.extend_from_slice(&x.data[..nws]);
         rem_save.data[nws - 1] &= mask;
 
@@ -259,10 +139,13 @@ fn div_rem_mont(x: &BigUint, y: &BigUint) -> (BigUint, BigUint) {
         // Restore for the even case
         if nshift > 0 {
             rem <<= nshift;
+            if rem.data.len() < rem_save.data.len() {
+                rem.data.resize(rem_save.data.len(), 0);
+            }
             __add2(&mut rem.data, &rem_save.data);
         }
 
-        return (q, rem);
+        return (q, rem.normalized());
     }
 
     // The actual core of this function.
@@ -283,14 +166,9 @@ fn div_rem_mont(x: &BigUint, y: &BigUint) -> (BigUint, BigUint) {
     // lo: [..w_len], hi: [w_len..]
     let mut lohi = vec![0; 2 * w_len];
 
-    for i in (0..(v_len - w_len + 1)).step_by(w_len) {
-        println!(
-            "i = {}; v = {}",
-            i,
-            BigUint {
-                data: (&v.data[i..i + w_len]).into()
-            }
-        );
+    let mut i = 0;
+    for l in (0..(v_len - w_len + 1)).step_by(w_len) {
+        i = l;
         let mut tmp = v.data[i..i + w_len].to_vec();
         let bw = __sub2(&mut tmp, &lohi[w_len..]);
 
@@ -333,25 +211,27 @@ fn div_rem_mont(x: &BigUint, y: &BigUint) -> (BigUint, BigUint) {
     }
 
     // Special handling for the last term.
-    let i = v_len - w_len + 1;
+    i += w_len;
     let j = v_len - i;
+    println!("i {}, j {}, {} {}", i, j, v_len, w_len);
+
     let mut cy = BigUint {
         data: smallvec![0; w_len],
     };
 
     if j > 0 {
         // Zero pad the last element from v into cy.
-        cy.data[..j].copy_from_slice(&v.data[i..]);
-
-        let bw = __sub2(&mut cy.data, &lohi[w_len..]);
+        cy.data[..j].copy_from_slice(&v.data[i..i + j]);
+        println!("i+ = {}, v = {}", i, cy.clone().normalized());
+        let bw = __sub2(&mut cy.data[..w_len], &lohi[w_len..]);
         if bw {
             __add2(&mut cy.data, &w.data);
         }
     } else {
-        cy.data.copy_from_slice(&lohi[..w_len]);
+        cy.data[..w_len].copy_from_slice(&lohi[..w_len]);
     }
 
-    println!("MR = {:?}", &cy.data[..]);
+    println!("MR = {}", cy.clone().normalized());
 
     // Transform back out of Montgomery space.
     //   calculate R**w_len
@@ -360,7 +240,7 @@ fn div_rem_mont(x: &BigUint, y: &BigUint) -> (BigUint, BigUint) {
     //  multiply the residue in `cy` with `basepow`
     let mut cy = mont_mul_n(&cy, &basepow, &w, &winv);
 
-    println!("remainder = {}", &cy);
+    println!("remainder = {} ({:?})", &cy, &cy);
 
     // Calculate quotient, now that we have the remainder.
     let mut q = smallvec![0; 2 * w_len];
@@ -369,7 +249,9 @@ fn div_rem_mont(x: &BigUint, y: &BigUint) -> (BigUint, BigUint) {
     if cl < w_len {
         lohi[w_len + cl..].copy_from_slice(&vec![0; w_len - cl]);
     }
-    for i in (0..v_len - w_len + 1).step_by(w_len) {
+    let mut i = 0;
+    for l in (0..v_len - w_len + 1).step_by(w_len) {
+        i = l;
         println!(
             "i = {}, v = {}",
             i,
@@ -412,12 +294,17 @@ fn div_rem_mont(x: &BigUint, y: &BigUint) -> (BigUint, BigUint) {
             .normalized()
         );
         // this is the y[i] = tmp step in the scalar routine
+        println!("{:?}, {:?}, {}, {}", q, &tmp, i, w_len);
+        if i + w_len >= q.len() {
+            q.resize(i + w_len, 0);
+        }
         q[i..i + w_len].copy_from_slice(&tmp[..w_len]);
+
         println!("q: {}", BigUint { data: q.clone() }.normalized());
     }
 
     // handle last step, for non dividing cases
-    let i = v_len - w_len + 1;
+    i += w_len;
     let j = v_len - i;
     println!("i = {}, j = {}", i, j);
     if j > 0 {
@@ -436,18 +323,59 @@ fn div_rem_mont(x: &BigUint, y: &BigUint) -> (BigUint, BigUint) {
     (BigUint { data: q }.normalized(), cy.normalized())
 }
 
+/// Shifts up to `63` bits to the left. Returning the out shifted bits.
+fn shl_n(x: &mut [BigDigit], nbits: u32) -> BigDigit {
+    let len = x.len();
+    assert!(len > 0);
+    assert!(nbits <= big_digit::BITS as u32);
+
+    let mbits = big_digit::BITS as u32 - nbits;
+    let ret = x[len - 1].wrapping_shr(mbits);
+    println!(
+        "ret: {}, {}, {} {}",
+        ret,
+        x[len - 1],
+        mbits,
+        x[len - 1] as i64 >> mbits as i32
+    );
+    for i in (1..len).rev() {
+        x[i] = x[i].wrapping_shl(nbits) + x[i - 1].wrapping_shr(mbits);
+    }
+
+    x[0] = x[0].wrapping_shl(nbits);
+
+    ret
+}
+
 /// Computes `R**n (mod q)`.
 /// - `pow = R**2 (mod q)`
 /// - `q * qinv = 1 (mod 2**BITS)`, `q` is odd.
 fn radix_power_n(n: usize, q: &BigUint, qinv: &BigUint) -> BigUint {
     let len = q.data.len();
-    // TODO: use a constant
-    let two: BigUint = 2u32.into();
-    let r = &two.pow(big_digit::BITS as u32 * len as u32) % q;
-    // TODO: implement optimized squaring algorithm
-    let r2 = r.modpow(&two, q);
 
-    println!("R**2 = {}", &r2);
+    let mut r = BigUint {
+        data: smallvec![0; 2 * len],
+    };
+
+    r.data[2 * len - 1] = big_digit::TWO_POW_BITS1;
+
+    println!("r/2 {}", &r);
+    let (_, mut r2) = div_rem_binary(&r, q);
+    println!("R**2/2 mod q = {}", &r2);
+    r2.data.resize(len, 0);
+    println!("tmp {:?}", &r2.data);
+    let overflow = shl_n(&mut r2.data, 1);
+    println!("tmp {:?}", &r2.data);
+
+    r2.normalize();
+
+    println!("overflow {}", overflow);
+    println!("cmp {}", q < &r2);
+    if overflow > 0 || q < &r2 {
+        r2 -= q;
+    }
+
+    println!("R**2 mod q = {}", &r2);
     if n == 2 {
         return r2;
     }
@@ -468,7 +396,7 @@ fn radix_power_n(n: usize, q: &BigUint, qinv: &BigUint) -> BigUint {
     }
 
     let r3 = mont_sqr_n(&r2, q, qinv);
-    println!("R**3 = {}", &r3);
+    println!("R**3 mod q = {}", &r3);
     let mut pow = if n == 4 {
         mont_mul_n(&r2, &r3, q, qinv)
     } else if n == 5 {
@@ -516,7 +444,8 @@ fn mod_invn(x: &BigUint) -> BigUint {
     let len = x.data.len();
     for j in 6..log2_numbits {
         let mut tmp = x.data.clone();
-        println!("{} / {}", j, log2_numbits);
+        println!("j = {} / {}", j, log2_numbits);
+        println!("yinv = {}", xinv.clone().normalized());
         println!("tmp = {}", BigUint { data: tmp.clone() });
         println!("w = {}", &x);
         mul_lo(&mut tmp, &xinv.data, len);
@@ -529,7 +458,9 @@ fn mod_invn(x: &BigUint) -> BigUint {
         mul_lo(&mut xinv.data, &tmp, len);
     }
 
-    xinv.normalized()
+    xinv.normalize();
+    println!("yinv = {}", &xinv);
+    xinv
 }
 
 /// Arithmetic negation, based on `-x = !x + 1`.
@@ -819,7 +750,18 @@ fn mmul_one(x: BigDigit, q: BigDigit, qinv: BigDigit) -> BigDigit {
 fn mmul_one_n(x: &BigUint, q: &BigUint, qinv: &BigUint) -> BigUint {
     debug_assert!(q.is_odd());
 
-    unimplemented!("");
+    let len = x.data.len();
+    let mut z = x.data.clone();
+
+    mul_lo(&mut z, &qinv.data, len);
+    mul_hi(&mut z, &q.data, len);
+
+    // hi - lo borrow, if hi == 0, then lo != 0.
+    if !is_zero(&z) {
+        sub2rev(&q.data, &mut z);
+    }
+
+    BigUint { data: z }.normalized()
 }
 
 fn calc_bitmap(n: usize) -> (usize, usize, u32) {
@@ -841,7 +783,7 @@ fn calc_bitmap(n: usize) -> (usize, usize, u32) {
 /// - `q * qinv = 1 (mod 2**BITS)`, `q` is odd.
 fn radix_power(n: usize, q: BigDigit, qinv: BigDigit) -> BigDigit {
     // TODO: Constant
-    let r = 2u128.pow(big_digit::BITS as u32) % q as u128;
+    let r = (big_digit::TWO_POW_BITS as u128) % q as u128;
     // TODO: implement optimized squaring algorithm
     let r2 = ((r * r) % q as u128) as u64;
 
@@ -1232,6 +1174,26 @@ mod tests {
         let r = BigUint::from_str_radix("618006351061617544", 10).unwrap();
 
         assert_eq!(div_rem_binary(&x, &y), (q.into(), r.into()));
+
+        let x = BigUint::from_str_radix(
+            "127448010132852514736270810920533549640629212529195061317911604628433231530694485239219883465657029494279756403108733909500313306050993696584122751370335550177025678063778658",
+            10,
+        )
+        .unwrap();
+        let y = BigUint::from_str_radix(
+            "3843712304801279920630164197378272649748715177882209365334",
+            10,
+        )
+        .unwrap();
+
+        let q = BigUint::from_str_radix("33157531060182086635190557281747640466913923624535236166568672556136939987187181635382537060699711037601239029963558", 10).unwrap();
+        let r = BigUint::from_str_radix(
+            "3721863193561123777824711600049067336224261079365735280286",
+            10,
+        )
+        .unwrap();
+
+        assert_eq!(div_rem_binary(&x, &y), (q, r));
     }
 
     #[test]
@@ -1276,12 +1238,27 @@ mod tests {
     }
 
     #[test]
-    fn test_mod_invn() {
+    fn test_mod_invn_cases() {
         let y = BigUint::from_str_radix("19437941122649628431", 10).unwrap();
 
         assert_eq!(
             mod_invn(&y),
             BigUint::from_str_radix("232515390938603038445704290069949444079", 10).unwrap()
+        );
+
+        let y = BigUint::from_str_radix(
+            "1921856152400639960315082098689136324874357588941104682667",
+            10,
+        )
+        .unwrap();
+
+        assert_eq!(
+            mod_invn(&y),
+            BigUint::from_str_radix(
+                "3403229015187975702927478358156698358619536564089218675715",
+                10
+            )
+            .unwrap()
         );
     }
 
@@ -1326,6 +1303,38 @@ mod tests {
         let r = BigUint::from_str_radix("618006351061617544", 10).unwrap();
 
         assert_eq!(div_rem_mont(&x, &y), (q.into(), r.into()));
+
+        let x = BigUint::from_str_radix(
+            "26959946667150639794667015086679348306636977796562933536078298087425",
+            10,
+        )
+        .unwrap();
+        let y = BigUint::from_str_radix("79228162514264337593543950335", 10).unwrap();
+
+        let q = BigUint::from_str_radix("340282366920938463463374607431768211455", 10).unwrap();
+        let r = BigUint::from_str_radix("0", 10).unwrap();
+
+        assert_eq!(div_rem_mont(&x, &y), (q.into(), r.into()));
+
+        let x = BigUint::from_str_radix(
+            "127448010132852514736270810920533549640629212529195061317911604628433231530694485239219883465657029494279756403108733909500313306050993696584122751370335550177025678063778658",
+            10,
+        )
+        .unwrap();
+        let y = BigUint::from_str_radix(
+            "3843712304801279920630164197378272649748715177882209365334",
+            10,
+        )
+        .unwrap();
+
+        let q = BigUint::from_str_radix("33157531060182086635190557281747640466913923624535236166568672556136939987187181635382537060699711037601239029963558", 10).unwrap();
+        let r = BigUint::from_str_radix(
+            "3721863193561123777824711600049067336224261079365735280286",
+            10,
+        )
+        .unwrap();
+
+        assert_eq!(div_rem_mont(&x, &y), (q, r));
     }
 
     #[test]

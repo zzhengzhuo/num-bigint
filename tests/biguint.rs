@@ -832,7 +832,14 @@ fn test_sub() {
 
 #[test]
 #[should_panic]
-fn test_sub_fail_on_underflow() {
+fn test_sub_fail_on_underflow_a() {
+    let (a, b): (BigUint, BigUint) = (10u32.into(), 15u32.into());
+    let _ = a - b;
+}
+
+#[test]
+#[should_panic]
+fn test_sub_fail_on_underflow_b() {
     let (a, b): (BigUint, BigUint) = (Zero::zero(), One::one());
     let _ = a - b;
 }

@@ -231,6 +231,20 @@ mod big_digit {
     #[cfg(feature = "u64_digit")]
     pub const BITS: usize = 64;
 
+    /// 2**31
+    #[cfg(not(feature = "u64_digit"))]
+    pub const TWO_POW_BITS1: u32 = 2147483648;
+    /// 2**31
+    #[cfg(feature = "u64_digit")]
+    pub const TWO_POW_BITS1: u64 = 9223372036854775808;
+
+    /// 2**32
+    #[cfg(not(feature = "u64_digit"))]
+    pub const TWO_POW_BITS: u64 = u32::max_value() as u64 + 1;
+    /// 2**64
+    #[cfg(feature = "u64_digit")]
+    pub const TWO_POW_BITS: u128 = u64::max_value() as u128 + 1;
+
     #[cfg(not(feature = "u64_digit"))]
     const LO_MASK: DoubleBigDigit = (-1i32 as DoubleBigDigit) >> BITS;
     #[cfg(feature = "u64_digit")]

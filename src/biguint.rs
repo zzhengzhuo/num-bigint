@@ -2463,11 +2463,11 @@ impl BitField for BigUint {
         }
     }
 
-    fn set_bits(&mut self, range: Range<usize>, value: Self) -> &mut Self {
+    fn set_bits(&mut self, _range: Range<usize>, _value: Self) -> &mut Self {
         unimplemented!()
     }
 
-    fn get_bits(&self, range: Range<usize>) -> Self {
+    fn get_bits(&self, _range: Range<usize>) -> Self {
         unimplemented!()
     }
 }

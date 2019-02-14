@@ -1,6 +1,6 @@
 use smallvec::SmallVec;
 
-use crate::algorithms::{__add2, __mac_digit, mac3, mac_digit};
+use crate::algorithms::{__add2, __mac_digit, mac3};
 use crate::big_digit::{BigDigit, DoubleBigDigit, BITS};
 use crate::{BigUint, VEC_SIZE};
 
