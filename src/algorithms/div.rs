@@ -2,11 +2,11 @@ use std::cmp::Ordering;
 
 use bit_field::BitField;
 use integer::Integer;
-use num_traits::{One, Zero};
+use num_traits::{One, Pow, Zero};
 use smallvec::SmallVec;
 
 use crate::algorithms::{
-    __add2, __add_scalar, __mul2, __sqr2, __sub2, add2, cmp_slice, mod_inv1, mul_hi, mul_lo, sub2,
+    __add2, __add_scalar, __mul3, __sub2, add2, cmp_slice, mod_inv1, mul_hi, mul_lo, sub2,
 };
 use crate::big_digit::{self, BigDigit, DoubleBigDigit};
 use crate::BigUint;
@@ -175,7 +175,6 @@ pub fn div_rem(u: &BigUint, d: &BigUint) -> (BigUint, BigUint) {
 }
 
 fn div_rem_mont(x: &BigUint, y: &BigUint) -> (BigUint, BigUint) {
-    panic!("not ready");
     let len_x = x.data.len();
     if len_x == y.data.len() {
         // First attempt at fast-mod based on FP approximation of the quotient `x/y`,
@@ -183,7 +182,7 @@ fn div_rem_mont(x: &BigUint, y: &BigUint) -> (BigUint, BigUint) {
 
         let (lo, i) = get_leading_bits(x);
         let (itmp, j) = get_leading_bits(y);
-        let bw = 1 << (i - j);
+        let bw = 1u64.wrapping_shl(i.wrapping_sub(j) as u32);
         let ncmax = 16;
 
         // Power-of-2 sacaling needed on ratio of left justified leading bits.
@@ -196,6 +195,7 @@ fn div_rem_mont(x: &BigUint, y: &BigUint) -> (BigUint, BigUint) {
             let yinv = y * &itmp;
             let mut r = x.clone();
             let bw = __sub2(&mut r.data, &yinv.data);
+            r.normalize();
 
             // If `bw == true` we need an additional correction, `+= y`.
             // nc tracks the number of correction steps needed
@@ -230,8 +230,8 @@ fn div_rem_mont(x: &BigUint, y: &BigUint) -> (BigUint, BigUint) {
     // Modulus must be odd for Montgomery.
     let nshift = y.trailing_zeros() as usize;
 
-    let mut x_adj: BigUint;
-    let mut y_adj: BigUint;
+    let x_adj: BigUint;
+    let y_adj: BigUint;
     let mut rem_save = BigUint::zero();
 
     let (v, w) = if nshift > 0 {
@@ -269,6 +269,12 @@ fn div_rem_mont(x: &BigUint, y: &BigUint) -> (BigUint, BigUint) {
 
     // We require a modular inverse of w for modmul using montgomery.
     let winv = mod_invn(w);
+    println!(
+        "yinv = {}",
+        BigUint {
+            data: winv.data.clone()
+        }
+    );
 
     // Process `v` in `w` len sized chunks. If the last chunk does not fit properly it gets special handling at the end.
 
@@ -277,20 +283,57 @@ fn div_rem_mont(x: &BigUint, y: &BigUint) -> (BigUint, BigUint) {
     // lo: [..w_len], hi: [w_len..]
     let mut lohi = vec![0; 2 * w_len];
 
-    for i in (0..(v_len + w_len - 1)).step_by(w_len) {
+    for i in (0..(v_len - w_len + 1)).step_by(w_len) {
+        println!(
+            "i = {}; v = {}",
+            i,
+            BigUint {
+                data: (&v.data[i..i + w_len]).into()
+            }
+        );
         let mut tmp = v.data[i..i + w_len].to_vec();
         let bw = __sub2(&mut tmp, &lohi[w_len..]);
 
         // Montgomery mul step: cy = UMULH(w, MULL(tmp, yinv))
-        mul_lo(&mut lohi[..w_len], &winv.data[..w_len]);
-        assert!(!__add_scalar(&mut tmp, bw as BigDigit));
+        lohi[..w_len].copy_from_slice(&tmp);
+        mul_lo(
+            &mut lohi[..w_len],
+            &winv.data[..std::cmp::min(winv.data.len(), w_len)],
+            w_len,
+        );
+
+        println!(
+            "MULL = {}",
+            BigUint {
+                data: (&lohi[..w_len]).to_vec().into()
+            }
+            .normalized()
+        );
+
+        assert!(__add_scalar(&mut tmp, bw as BigDigit) == 0);
 
         // lo:hi = MUL_LOHI(w, tmp)
-        __mul2(&mut lohi[..w_len], &w.data);
+        let tmp = __mul3(&lohi[..w_len], &w.data);
+        let cl = std::cmp::min(tmp.len(), lohi.len());
+        lohi[..cl].copy_from_slice(&tmp[..cl]);
+        println!(
+            "  lo = {}",
+            BigUint {
+                data: (&lohi[..w_len]).to_vec().into()
+            }
+            .normalized()
+        );
+        println!(
+            "  hi = {}",
+            BigUint {
+                data: (&lohi[w_len..]).to_vec().into()
+            }
+            .normalized()
+        );
     }
 
     // Special handling for the last term.
-    let i = v_len + w_len - 1;
+    let i = v_len - w_len + 1;
     let j = v_len - i;
     let mut cy = BigUint {
         data: smallvec![0; w_len],
@@ -308,38 +351,82 @@ fn div_rem_mont(x: &BigUint, y: &BigUint) -> (BigUint, BigUint) {
         cy.data.copy_from_slice(&lohi[..w_len]);
     }
 
+    println!("MR = {:?}", &cy.data[..]);
+
     // Transform back out of Montgomery space.
     //   calculate R**w_len
     let basepow = radix_power_n(w_len, &w, &winv);
+    println!("r**{} = {}", w_len, &basepow);
     //  multiply the residue in `cy` with `basepow`
     let mut cy = mont_mul_n(&cy, &basepow, &w, &winv);
 
+    println!("remainder = {}", &cy);
+
     // Calculate quotient, now that we have the remainder.
-    let mut q = SmallVec::with_capacity(w_len);
-    lohi[w_len..].copy_from_slice(&cy.data[..w_len]);
-    for i in (0..v_len + w_len + 1).step_by(w_len) {
+    let mut q = smallvec![0; 2 * w_len];
+    let cl = std::cmp::min(cy.data.len(), w_len);
+    lohi[w_len..w_len + cl].copy_from_slice(&cy.data[..cl]);
+    if cl < w_len {
+        lohi[w_len + cl..].copy_from_slice(&vec![0; w_len - cl]);
+    }
+    for i in (0..v_len - w_len + 1).step_by(w_len) {
+        println!(
+            "i = {}, v = {}",
+            i,
+            BigUint {
+                data: v.data[i..i + w_len].into()
+            }
+            .normalized()
+        );
         let mut tmp = v.data[i..i + w_len].to_vec();
         let bw = __sub2(&mut tmp, &lohi[w_len..]);
 
         // Montgomery mul step
-        mul_lo(&mut lohi[..w_len], &winv.data);
+        mul_lo(&mut tmp, &winv.data, w_len);
 
-        __mul2(&mut lohi[..w_len], &w.data);
+        println!(
+            "tmp * yinv = {}",
+            BigUint {
+                data: tmp.clone().into()
+            }
+            .normalized()
+        );
+
+        let tmp2 = __mul3(&tmp, &w.data);
+        lohi[..].copy_from_slice(&tmp2[..2 * w_len]);
         lohi[w_len] += bw as BigDigit;
+        println!("{:?}", &lohi);
         debug_assert!(lohi[w_len] >= bw as BigDigit, "carry issue");
-
+        println!(
+            "  lo = {}",
+            BigUint {
+                data: (&lohi[..w_len]).to_vec().into()
+            }
+            .normalized()
+        );
+        println!(
+            "  hi = {}",
+            BigUint {
+                data: (&lohi[w_len..]).to_vec().into()
+            }
+            .normalized()
+        );
         // this is the y[i] = tmp step in the scalar routine
-        q.extend_from_slice(&lohi[..w_len]);
+        q[i..i + w_len].copy_from_slice(&tmp[..w_len]);
+        println!("q: {}", BigUint { data: q.clone() }.normalized());
     }
 
     // handle last step, for non dividing cases
-    let i = v_len + w_len + 1;
+    let i = v_len - w_len + 1;
     let j = v_len - i;
+    println!("i = {}, j = {}", i, j);
     if j > 0 {
         // clear q[i..j]
-        q.truncate(i);
+        for qi in q.iter_mut().skip(i).take(j) {
+            *qi = 0;
+        }
     }
-
+    println!("q = {}", BigUint { data: q.clone() }.normalized());
     // Adjust remainder for even modulus.
     if nshift > 0 {
         cy <<= nshift;
@@ -354,20 +441,13 @@ fn div_rem_mont(x: &BigUint, y: &BigUint) -> (BigUint, BigUint) {
 /// - `q * qinv = 1 (mod 2**BITS)`, `q` is odd.
 fn radix_power_n(n: usize, q: &BigUint, qinv: &BigUint) -> BigUint {
     let len = q.data.len();
-    let mut r = BigUint {
-        data: smallvec![0; 2 * len],
-    };
-    r.data[2 * len - 1] = 0x800000000000000;
+    // TODO: use a constant
+    let two: BigUint = 2u32.into();
+    let r = &two.pow(big_digit::BITS as u32 * len as u32) % q;
+    // TODO: implement optimized squaring algorithm
+    let r2 = r.modpow(&two, q);
 
-    // tmp = R**2 / 2 mod q
-    let (_, tmp) = div_rem_binary(&r, q);
-
-    // mod double
-    let mut r2 = tmp << 1;
-    if &r2 > q {
-        r2 -= q
-    }
-
+    println!("R**2 = {}", &r2);
     if n == 2 {
         return r2;
     }
@@ -388,7 +468,7 @@ fn radix_power_n(n: usize, q: &BigUint, qinv: &BigUint) -> BigUint {
     }
 
     let r3 = mont_sqr_n(&r2, q, qinv);
-
+    println!("R**3 = {}", &r3);
     let mut pow = if n == 4 {
         mont_mul_n(&r2, &r3, q, qinv)
     } else if n == 5 {
@@ -419,7 +499,7 @@ fn mod_invn(x: &BigUint) -> BigUint {
     debug_assert!(x.is_odd());
 
     let xbits = x.data.len() << 6; // TODO: adjust for 32bit
-    let log2_numbits = ((1.0 * xbits as f64) / (2.0f64.ln())).ceil() as usize;
+    let log2_numbits = ((1.0 * xbits as f64).ln() / (2.0f64.ln())).ceil() as usize;
 
     let mut xinv = BigUint {
         data: SmallVec::with_capacity(x.data.len()),
@@ -427,37 +507,88 @@ fn mod_invn(x: &BigUint) -> BigUint {
 
     // inverse for one limb
     xinv.data.push(mod_inv1(x.data[0]));
+    xinv.data.resize(x.data.len(), 0);
 
     // calculate the other limbs, we double the good limbs each iteration.
+    println!("x: {:?}", &x);
+    println!("xinv: {:?}", &xinv);
 
-    let mut tmp: SmallVec<_>;
-
-    for _ in 6..log2_numbits {
-        tmp = x.data.clone();
-        mul_lo(&mut tmp, &xinv.data);
+    let len = x.data.len();
+    for j in 6..log2_numbits {
+        let mut tmp = x.data.clone();
+        println!("{} / {}", j, log2_numbits);
+        println!("tmp = {}", BigUint { data: tmp.clone() });
+        println!("w = {}", &x);
+        mul_lo(&mut tmp, &xinv.data, len);
+        println!("tmp: {:?}", &tmp);
         nega(&mut tmp);
-        __add_scalar(&mut tmp, 2);
-        mul_lo(&mut xinv.data, &tmp);
+        println!("tmp: {:?}", &tmp);
+        let _bw = __add_scalar(&mut tmp, 2);
+        // debug_assert!(bw == 0, "unexpected carry");
+
+        mul_lo(&mut xinv.data, &tmp, len);
     }
 
     xinv.normalized()
 }
 
 /// Arithmetic negation, based on `-x = !x + 1`.
+#[inline]
 fn nega(x: &mut [BigDigit]) {
     negl(x);
     __add_scalar(x, 1);
 }
 
 /// Logical negation.
+#[inline]
 fn negl(x: &mut [BigDigit]) {
     for xi in x.iter_mut() {
         *xi = !*xi;
     }
 }
 
+/// Slow division one bit at a time.
 fn div_rem_binary(x: &BigUint, y: &BigUint) -> (BigUint, BigUint) {
-    unimplemented!("div_rem_binary");
+    println!("div_rem_binary {} / {}", x, y);
+    assert!(!y.is_zero(), "dividing by 0");
+
+    let x_len = x.data.len();
+    let y_len = y.data.len();
+    let max_len = std::cmp::max(x_len, y_len);
+
+    // Done if `x < y`.
+    if x_len < y_len || (x_len == y_len && x < y) {
+        return (0u32.into(), x.clone());
+    }
+
+    let lz_x = x.leading_zeros() as usize + (max_len - x_len) * big_digit::BITS;
+    let lz_y = y.leading_zeros() as usize + (max_len - y_len) * big_digit::BITS;
+    let nshift = lz_y - lz_x;
+
+    // Left justify the modulus
+    let mut y_loc = y << nshift;
+    let mut x_loc = x.clone();
+
+    let mut q = BigUint {
+        data: smallvec![0; max_len],
+    };
+
+    for i in (0..nshift + 1).rev() {
+        if &x_loc > &y_loc {
+            __sub2(&mut x_loc.data, &y_loc.data);
+            x_loc.normalize();
+            q.set_bit(i, true);
+        }
+
+        if i > 0 {
+            y_loc >>= 1;
+        }
+    }
+
+    // Remainder is in x_loc
+    debug_assert!(&x_loc < y, "remainder should be less than the modulus");
+
+    return (q.normalized(), x_loc);
 }
 
 /// Extract the leading `BITS` bits from `x`.
@@ -601,7 +732,25 @@ fn mont_mul(x: BigDigit, y: BigDigit, q: BigDigit, qinv: BigDigit) -> BigDigit {
 fn mont_mul_n(x: &BigUint, y: &BigUint, q: &BigUint, qinv: &BigUint) -> BigUint {
     debug_assert!(q.is_odd());
 
-    unimplemented!("");
+    let len = x.data.len();
+
+    let mut lohi = x.data.clone();
+    lohi.resize(2 * len, 0);
+    let tmp = __mul3(&lohi, &y.data);
+
+    lohi.copy_from_slice(&tmp[..2 * len]);
+
+    let (lo, hi) = lohi.split_at_mut(len);
+
+    mul_lo(lo, &qinv.data, len);
+    mul_hi(lo, &q.data, len);
+
+    let bw = __sub2(hi, &*lo);
+    if bw {
+        __add2(hi, &q.data);
+    }
+
+    BigUint::new_native(hi.to_vec().into())
 }
 
 /// Calculate the montgomery square `x**2 * R**-1 (mod q)`,
@@ -629,14 +778,16 @@ fn mont_sqr_n(x: &BigUint, q: &BigUint, qinv: &BigUint) -> BigUint {
     debug_assert!(q.is_odd());
     let len = x.data.len();
 
+    // TODO: optimize for squaring
     let mut lohi = x.data.clone();
     lohi.resize(2 * len, 0);
-    __sqr2(&mut lohi);
+    let tmp = __mul3(&lohi, &lohi);
+    lohi.copy_from_slice(&tmp[..2 * len]);
 
     let (lo, hi) = lohi.split_at_mut(len);
 
-    mul_lo(lo, &qinv.data);
-    mul_hi(lo, &q.data);
+    mul_lo(lo, &qinv.data, len);
+    mul_hi(lo, &q.data, len);
 
     let bw = __sub2(hi, &*lo);
     if bw {
@@ -747,6 +898,9 @@ fn remainder_b(x: &BigUint, q: BigDigit, qinv: BigDigit) -> BigDigit {
     debug_assert_eq!(q.wrapping_mul(qinv), 1);
 
     let n = x.data.len();
+    if n == 0 {
+        return 0;
+    }
     if n == 1 {
         return x.data[0] % q;
     }
@@ -905,7 +1059,7 @@ mod tests {
     use crate::biguint::IntoBigUint;
     use crate::traits::ModInverse;
 
-    use num_traits::{FromPrimitive, Pow, ToPrimitive};
+    use num_traits::{FromPrimitive, Num, Pow, ToPrimitive};
     use std::str::FromStr;
 
     #[test]
@@ -1045,5 +1199,144 @@ mod tests {
             let rem = remainder_a_u2(&x, q, qinv);
             assert_eq!(x_orig % q, rem);
         }
+    }
+
+    #[test]
+    fn test_negl() {
+        let mut x = vec![1, 2, 3];
+        negl(&mut x);
+        assert_eq!(x, vec![!1, !2, !3]);
+    }
+
+    #[test]
+    fn test_nega() {
+        let mut x = vec![5];
+        nega(&mut x);
+        assert_eq!(x, vec![!5 + 1]);
+    }
+
+    #[test]
+    fn test_div_rem_binary() {
+        let x = BigUint::from_u64(123).unwrap();
+        let y = BigUint::from_u64(456).unwrap();
+
+        let q: u32 = 123 / 456;
+        let r: u32 = 123 % 456;
+
+        assert_eq!(div_rem_binary(&x, &y), (q.into(), r.into()));
+
+        let x = BigUint::from_str_radix("364131549958466711308970009901738230041", 10).unwrap();
+        let y = BigUint::from_str_radix("19437941122649628431", 10).unwrap();
+
+        let q = BigUint::from_str_radix("18733030811281269087", 10).unwrap();
+        let r = BigUint::from_str_radix("618006351061617544", 10).unwrap();
+
+        assert_eq!(div_rem_binary(&x, &y), (q.into(), r.into()));
+    }
+
+    #[test]
+    fn test_mont_mul_n() {
+        let x: BigUint = 10u32.into();
+        let y: BigUint = 40u32.into();
+        let q: BigUint = 13u32.into();
+        let qinv = mod_invn(&q);
+
+        let res = mont_mul_n(&x, &y, &q, &qinv);
+        let r = 2u128.pow(big_digit::BITS as u32);
+        let rinv = r
+            .into_biguint()
+            .unwrap()
+            .mod_inverse(&q)
+            .unwrap()
+            .into_biguint()
+            .unwrap();
+        let expected = (&x * &y * rinv) % q;
+
+        assert_eq!(res, expected);
+    }
+
+    #[test]
+    fn test_mont_sqr_n() {
+        let x: BigUint = 10u32.into();
+        let q: BigUint = 13u32.into();
+        let qinv = mod_invn(&q);
+
+        let res = mont_sqr_n(&x, &q, &qinv);
+        let r = 2u128.pow(big_digit::BITS as u32);
+        let rinv = r
+            .into_biguint()
+            .unwrap()
+            .mod_inverse(&q)
+            .unwrap()
+            .into_biguint()
+            .unwrap();
+        let expected = (&x * &x * rinv) % q;
+
+        assert_eq!(res, expected);
+    }
+
+    #[test]
+    fn test_mod_invn() {
+        let y = BigUint::from_str_radix("19437941122649628431", 10).unwrap();
+
+        assert_eq!(
+            mod_invn(&y),
+            BigUint::from_str_radix("232515390938603038445704290069949444079", 10).unwrap()
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "rand")]
+    fn test_mod_invn_rand() {
+        use crate::bigrand::RandBigInt;
+        use rand::thread_rng;
+
+        let mut rng = thread_rng();
+
+        for i in 0..1000 {
+            for b in &[64, 128, 256, 1024, 2048] {
+                let mut x = rng.gen_biguint(*b);
+                // make x odd
+                x.set_bit(0, true);
+                let xinv = mod_invn(&x);
+                let r = 2u32
+                    .into_biguint()
+                    .unwrap()
+                    .pow((big_digit::BITS * x.data.len()) as u32);
+
+                assert_eq!((&x * &xinv) % r, BigUint::one(), "{} * {}", &x, &xinv);
+            }
+        }
+    }
+
+    #[test]
+    fn test_div_rem_mont() {
+        let x = BigUint::from_u64(123).unwrap();
+        let y = BigUint::from_u64(456).unwrap();
+
+        let q: u32 = 123 / 456;
+        let r: u32 = 123 % 456;
+
+        assert_eq!(div_rem_mont(&x, &y), (q.into(), r.into()));
+
+        let x = BigUint::from_str_radix("364131549958466711308970009901738230041", 10).unwrap();
+        let y = BigUint::from_str_radix("19437941122649628431", 10).unwrap();
+
+        let q = BigUint::from_str_radix("18733030811281269087", 10).unwrap();
+        let r = BigUint::from_str_radix("618006351061617544", 10).unwrap();
+
+        assert_eq!(div_rem_mont(&x, &y), (q.into(), r.into()));
+    }
+
+    #[test]
+    fn test_radix_power_n() {
+        let q: BigUint = 16357897499336320049u64.into();
+        let qinv = mod_invn(&q);
+
+        // Algorithm A:
+        let pow = radix_power_n(17, &q, &qinv);
+
+        let r17: BigUint = 8502984233828494641u64.into();
+        assert_eq!(&pow, &r17);
     }
 }

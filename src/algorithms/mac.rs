@@ -19,8 +19,14 @@ pub fn mac_with_carry(a: BigDigit, b: BigDigit, c: BigDigit, acc: &mut DoubleBig
 /// Three argument multiply accumulate:
 /// acc += b * c
 pub fn mac_digit(acc: &mut [BigDigit], b: &[BigDigit], c: BigDigit) {
+    let carry = __mac_digit(acc, b, c);
+    assert_eq!(carry, 0, "carry overflow during multiplication!");
+}
+
+#[inline]
+pub fn __mac_digit(acc: &mut [BigDigit], b: &[BigDigit], c: BigDigit) -> BigDigit {
     if c == 0 {
-        return;
+        return 0;
     }
 
     let mut carry = 0;
@@ -32,9 +38,13 @@ pub fn mac_digit(acc: &mut [BigDigit], b: &[BigDigit], c: BigDigit) {
 
     let mut a = a_hi.iter_mut();
     while carry != 0 {
-        let a = a.next().expect("carry overflow during multiplication!");
-        *a = adc(*a, 0, &mut carry);
+        if let Some(a) = a.next() {
+            *a = adc(*a, 0, &mut carry);
+        } else {
+            break;
+        }
     }
+    carry as BigDigit
 }
 
 /// Three argument multiply accumulate:

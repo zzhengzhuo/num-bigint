@@ -60,9 +60,14 @@ version = "1.2.0"
 [dependencies.byteorder]
 version = "1.2.7"
 
+[dependencies.x86]
+version = "0.14.0"
+optional = true
+
 [dev-dependencies]
 criterion = "0.2"
 rand_chacha = "0.1"
+
 
 [dev-dependencies.serde_test]
 version = "1.0"

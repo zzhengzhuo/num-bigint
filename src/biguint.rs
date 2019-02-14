@@ -7,6 +7,7 @@ use std::default::Default;
 use std::fmt;
 use std::iter::{Product, Sum};
 use std::mem;
+use std::ops::Range;
 use std::ops::{
     Add, AddAssign, BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, Div, DivAssign,
     Mul, MulAssign, Neg, Rem, RemAssign, Shl, ShlAssign, Shr, ShrAssign, Sub, SubAssign,
@@ -27,6 +28,7 @@ use BigInt;
 
 use big_digit::{self, BigDigit};
 
+use bit_field::BitField;
 use smallvec::SmallVec;
 
 #[path = "monty.rs"]
@@ -516,7 +518,7 @@ impl<'a> AddAssign<&'a BigUint> for BigUint {
         } else {
             __add2(&mut self.data[..], &other.data[..])
         };
-        if carry {
+        if carry > 0 {
             self.data.push(carry as BigDigit);
         }
     }
@@ -548,7 +550,7 @@ impl AddAssign<u32> for BigUint {
             }
 
             let carry = __add_scalar(&mut self.data, other as BigDigit);
-            if carry {
+            if carry > 0 {
                 self.data.push(carry as BigDigit);
             }
         }
@@ -593,7 +595,7 @@ impl AddAssign<u64> for BigUint {
             }
 
             let carry = __add_scalar(&mut self.data, other as BigDigit);
-            if carry {
+            if carry > 0 {
                 self.data.push(carry as BigDigit);
             }
         }
@@ -651,7 +653,7 @@ impl AddAssign<u128> for BigUint {
             }
 
             let carry = __add2(&mut self.data, &[lo, hi]);
-            if carry {
+            if carry != 0 {
                 self.data.push(carry as BigDigit);
             }
         }
@@ -2420,7 +2422,7 @@ impl BigUint {
             .rev()
             .enumerate()
             .find(|&(_, &digit)| digit != 0)
-            .map(|(i, digit)| i * big_digit::BITS + digit.trailing_zeros() as usize)
+            .map(|(i, digit)| i * big_digit::BITS + digit.leading_zeros() as usize)
             .unwrap_or_default() as u32
     }
 
@@ -2432,6 +2434,41 @@ impl BigUint {
             self.data.resize(1, 0);
             self.data[0] = digit;
         }
+    }
+}
+
+impl BitField for BigUint {
+    fn bit_length() -> usize {
+        panic!("does not work for BigUint");
+    }
+
+    fn set_bit(&mut self, bit: usize, value: bool) -> &mut Self {
+        let word = bit / big_digit::BITS;
+        let bit_in_word = bit % big_digit::BITS;
+        if word > self.data.len() {
+            self.data.resize(word, 0);
+        }
+        self.data[word].set_bit(bit_in_word, value);
+
+        self
+    }
+
+    fn get_bit(&self, bit: usize) -> bool {
+        let word = bit / big_digit::BITS;
+        let bit_in_word = bit % big_digit::BITS;
+        if word > self.data.len() {
+            false
+        } else {
+            self.data[word].get_bit(bit_in_word)
+        }
+    }
+
+    fn set_bits(&mut self, range: Range<usize>, value: Self) -> &mut Self {
+        unimplemented!()
+    }
+
+    fn get_bits(&self, range: Range<usize>) -> Self {
+        unimplemented!()
     }
 }
 

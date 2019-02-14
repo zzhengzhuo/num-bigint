@@ -50,7 +50,7 @@ pub fn sub2(a: &mut [BigDigit], b: &[BigDigit]) {
     // note: we're _required_ to fail on underflow
     assert!(
         !borrow,
-        "Cannot subtract b from a because b is larger than a.\na: {:?}\nb:{:?}",
+        "Cannot subtract b from a because b is larger than a.\na: {:?}\nb: {:?}",
         a, b
     );
 }

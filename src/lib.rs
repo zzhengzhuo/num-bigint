@@ -106,6 +106,9 @@ extern crate byteorder;
 
 extern crate bit_field;
 
+#[cfg(feature = "x86")]
+extern crate x86;
+
 use std::error::Error;
 use std::fmt;
 
