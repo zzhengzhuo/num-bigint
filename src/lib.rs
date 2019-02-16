@@ -93,7 +93,6 @@ extern crate serde;
 #[macro_use]
 extern crate smallvec;
 
-#[cfg(feature = "prime")]
 #[macro_use]
 extern crate lazy_static;
 

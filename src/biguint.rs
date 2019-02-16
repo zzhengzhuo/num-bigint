@@ -49,9 +49,19 @@ use ParseBigIntError;
 use UsizePromotion;
 
 /// A big unsigned integer type.
-#[derive(Clone, Debug, Hash)]
+#[derive(Debug, Hash)]
 pub struct BigUint {
     pub(crate) data: SmallVec<[BigDigit; VEC_SIZE]>,
+}
+
+impl Clone for BigUint {
+    #[inline]
+    fn clone(&self) -> Self {
+        let mut data = SmallVec::with_capacity(self.data.len());
+        data.extend_from_slice(&self.data);
+
+        BigUint { data }
+    }
 }
 
 impl PartialEq for BigUint {
@@ -398,7 +408,9 @@ impl Shr<usize> for BigUint {
 
     #[inline]
     fn shr(self, rhs: usize) -> BigUint {
-        biguint_shr(Cow::Owned(self), rhs)
+        let mut res = self.clone();
+        biguint_shr(&mut res, rhs);
+        res
     }
 }
 impl<'a> Shr<usize> for &'a BigUint {
@@ -406,15 +418,16 @@ impl<'a> Shr<usize> for &'a BigUint {
 
     #[inline]
     fn shr(self, rhs: usize) -> BigUint {
-        biguint_shr(Cow::Borrowed(self), rhs)
+        let mut res = self.clone();
+        biguint_shr(&mut res, rhs);
+        res
     }
 }
 
 impl ShrAssign<usize> for BigUint {
     #[inline]
     fn shr_assign(&mut self, rhs: usize) {
-        let n = mem::replace(self, BigUint::zero());
-        *self = n >> rhs;
+        biguint_shr(self, rhs);
     }
 }
 
@@ -2342,8 +2355,10 @@ impl BigUint {
     /// be nonzero.
     #[inline]
     pub(crate) fn normalize(&mut self) {
-        while let Some(&0) = self.data.last() {
-            self.data.pop();
+        if let Some(i) = self.data.iter().rposition(|&x| x > 0) {
+            self.data.truncate(i + 1);
+        } else {
+            self.data.clear();
         }
     }
 
