@@ -26,10 +26,6 @@ pub fn mac_digit(acc: &mut [BigDigit], b: &[BigDigit], c: BigDigit) {
 
 #[inline]
 pub fn __mac_digit(acc: &mut [BigDigit], b: &[BigDigit], c: BigDigit) -> BigDigit {
-    if c == 0 {
-        return 0;
-    }
-
     let mut carry = 0;
     let (a_lo, a_hi) = acc.split_at_mut(b.len());
 

@@ -108,6 +108,8 @@ extern crate bit_field;
 #[cfg(feature = "x86")]
 extern crate x86;
 
+extern crate specialized_div_rem;
+
 use std::error::Error;
 use std::fmt;
 
