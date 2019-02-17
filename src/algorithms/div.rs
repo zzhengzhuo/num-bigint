@@ -1718,6 +1718,7 @@ mod tests {
         use crate::bigrand::RandBigInt;
         use rand::{Rng, SeedableRng, XorShiftRng};
         let mut rng = XorShiftRng::from_seed([1u8; 16]);
+        let mut scratch = vec![0; 512];
 
         for _ in 0..100 {
             let x = rng.gen_biguint(1024);
@@ -1725,7 +1726,7 @@ mod tests {
             let mut q = rng.gen_biguint(1024);
             q |= BigUint::one();
 
-            let qinv = mod_invn(&q);
+            let qinv = mod_invn(&q, &mut scratch);
 
             let rinv = BigUint::from_u64(2)
                 .unwrap()
@@ -1738,7 +1739,7 @@ mod tests {
                 .unwrap();
 
             let (_, res) = div_rem_knuth(&(&x * &y * &rinv), &q);
-            assert_eq!(mont_mul_n(&x, &y, &q, &qinv), res,);
+            assert_eq!(mont_mul_n(&x, &y, &q, &qinv, &mut scratch), res,);
         }
     }
 
@@ -1771,15 +1772,16 @@ mod tests {
         use crate::bigrand::RandBigInt;
         use rand::{Rng, SeedableRng, XorShiftRng};
         let mut rng = XorShiftRng::from_seed([1u8; 16]);
+        let mut scratch = vec![0; 512];
 
         for i in 0..1000 {
             let x = rng.gen_biguint(1024);
             let mut q = rng.gen_biguint(1024);
             q |= BigUint::one();
 
-            let qinv = mod_invn(&q);
+            let qinv = mod_invn(&q, &mut scratch);
 
-            let res = mont_sqr_n(&x, &q, &qinv);
+            let res = mont_sqr_n(&x, &q, &qinv, &mut scratch);
             let r = 2u128.pow(big_digit::BITS as u32);
             let rinv = r
                 .into_biguint()
@@ -1827,13 +1829,13 @@ mod tests {
         use rand::thread_rng;
 
         let mut rng = thread_rng();
-
+        let mut scratch = vec![0; 1024];
         for i in 0..1000 {
             for b in &[64, 128, 256, 1024, 2048] {
                 let mut x = rng.gen_biguint(*b);
                 // make x odd
                 x.set_bit(0, true);
-                let xinv = mod_invn(&x);
+                let xinv = mod_invn(&x, &mut scratch);
                 let r = 2u32
                     .into_biguint()
                     .unwrap()
