@@ -2,21 +2,46 @@ use std::ops::Shl;
 
 use num_traits::{One, Zero};
 
-use crate::algorithms::mod_inv1;
+use crate::algorithms::{mod_inv1, mod_invn, mont_mul_n, radix_power_n};
 use crate::big_digit::{self, BigDigit, DoubleBigDigit};
 use crate::biguint::BigUint;
 
 struct MontyReducer {
+    // ninv: BigUint,
     n0inv: BigDigit,
+    rr: BigUint,
 }
 
 impl MontyReducer {
-    fn new(n: &BigUint) -> Self {
+    fn new(n: &BigUint, scratch: &mut [BigDigit]) -> Self {
+        let len = n.data.len();
         let ninv = mod_inv1(n.data[0]);
         // flip sign
         let n0inv = (!ninv) + 1;
-        MontyReducer { n0inv }
+        let ninv = mod_invn(n, scratch);
+
+        // rr = 2**(2*_W*len(m)) mod m
+        let rr = radix_power_n(2 * len, n, &ninv, scratch);
+
+        let mut rr1 = BigUint::one();
+        rr1 = (rr1.shl(2 * len * big_digit::BITS)) % n;
+
+        assert_eq!(&rr, &rr1);
+
+        MontyReducer { n0inv, rr: rr1 }
     }
+}
+fn montgomery_(
+    z: &mut BigUint,
+    x: &BigUint,
+    y: &BigUint,
+    q: &BigUint,
+    qinv: &BigUint,
+    n: usize,
+    scratch: &mut [BigDigit],
+) {
+    let res = mont_mul_n(x, y, q, qinv, scratch);
+    z.data = res.data;
 }
 
 /// Computes z mod m = x * y * 2 ** (-n*_W) mod m
@@ -26,19 +51,12 @@ impl MontyReducer {
 /// In the terminology of that paper, this is an "Almost Montgomery Multiplication":
 /// x and y are required to satisfy 0 <= z < 2**(n*_W) and then the result
 /// z is guaranteed to satisfy 0 <= z < 2**(n*_W), but it may not be < m.
-fn montgomery(z: &mut BigUint, x: &BigUint, y: &BigUint, m: &BigUint, k: BigDigit, n: usize) {
+pub fn montgomery(z: &mut BigUint, x: &BigUint, y: &BigUint, m: &BigUint, k: BigDigit, n: usize) {
     // This code assumes x, y, m are all the same length, n.
     // (required by addMulVVW and the for loop).
     // It also assumes that x, y are already reduced mod m,
     // or else the result will not be properly reduced.
-    assert!(
-        x.data.len() == n && y.data.len() == n && m.data.len() == n,
-        "{:?} {:?} {:?} {}",
-        x,
-        y,
-        m,
-        n
-    );
+    assert!(x.data.len() == n && y.data.len() == n && m.data.len() == n,);
 
     z.data.clear();
     z.data.resize(n * 2, 0);
@@ -112,8 +130,10 @@ fn mul_add_www(x: BigDigit, y: BigDigit, c: BigDigit) -> (BigDigit, BigDigit) {
 /// Calculates x ** y mod m using a fixed, 4-bit window.
 pub fn monty_modpow(x: &BigUint, y: &BigUint, m: &BigUint) -> BigUint {
     assert!(m.data[0] & 1 == 1);
-    let mr = MontyReducer::new(m);
     let num_words = m.data.len();
+    let mut scratch = vec![0; 8 * num_words];
+
+    let mr = MontyReducer::new(m, &mut scratch);
 
     let mut x = x.clone();
 
@@ -127,13 +147,13 @@ pub fn monty_modpow(x: &BigUint, y: &BigUint, m: &BigUint) -> BigUint {
         x.data.resize(num_words, 0);
     }
 
-    // rr = 2**(2*_W*len(m)) mod m
-    let mut rr = BigUint::one();
-    rr = (rr.shl(2 * num_words * big_digit::BITS)) % m;
-    if rr.data.len() < num_words {
-        rr.data.resize(num_words, 0);
-    }
+    let rr = mr.rr;
+
     // one = 1, with equal length to that of m
+    // let mut one = BigUint {
+    //     data: smallvec![0; num_words],
+    // };
+    // one.data[0] = 1;
     let mut one = BigUint::one();
     one.data.resize(num_words, 0);
 
@@ -142,31 +162,51 @@ pub fn monty_modpow(x: &BigUint, y: &BigUint, m: &BigUint) -> BigUint {
     let mut powers = Vec::with_capacity(1 << n);
 
     let mut v1 = BigUint::with_capacity(num_words);
-    montgomery(&mut v1, &one, &rr, m, mr.n0inv, num_words);
+    montgomery(
+        &mut v1, &one, &rr, m, mr.n0inv, num_words, /* &mut scratch */
+    );
     powers.push(v1);
     let mut v2 = BigUint::zero();
-    montgomery(&mut v2, &x, &rr, m, mr.n0inv, num_words);
+    montgomery(
+        &mut v2, &x, &rr, m, mr.n0inv, num_words, /* &mut scratch */
+    );
     powers.push(v2);
     for i in 2..1 << n {
         let mut r = BigUint::with_capacity(num_words);
-        montgomery(&mut r, &powers[i - 1], &powers[1], m, mr.n0inv, num_words);
+        montgomery(
+            &mut r,
+            &powers[i - 1],
+            &powers[1],
+            m,
+            mr.n0inv,
+            num_words,
+            /* &mut scratch */
+        );
         powers.push(r);
     }
 
     // initialize z = 1 (Montgomery 1)
     let mut z = powers[0].clone();
     let mut zz = BigUint::with_capacity(num_words);
-
+    // println!("powers: {:?}", &powers);
     // same windowed exponent, but with Montgomery multiplications
     for i in (0..y.data.len()).rev() {
         let mut yi = y.data[i];
         let mut j = 0;
         while j < big_digit::BITS {
             if i != y.data.len() - 1 || j != 0 {
-                montgomery(&mut zz, &z, &z, m, mr.n0inv, num_words);
-                montgomery(&mut z, &zz, &zz, m, mr.n0inv, num_words);
-                montgomery(&mut zz, &z, &z, m, mr.n0inv, num_words);
-                montgomery(&mut z, &zz, &zz, m, mr.n0inv, num_words);
+                montgomery(
+                    &mut zz, &z, &z, m, mr.n0inv, num_words, /* &mut scratch */
+                );
+                montgomery(
+                    &mut z, &zz, &zz, m, mr.n0inv, num_words, /* &mut scratch */
+                );
+                montgomery(
+                    &mut zz, &z, &z, m, mr.n0inv, num_words, /* &mut scratch */
+                );
+                montgomery(
+                    &mut z, &zz, &zz, m, mr.n0inv, num_words, /* &mut scratch */
+                );
             }
             montgomery(
                 &mut zz,
@@ -175,6 +215,7 @@ pub fn monty_modpow(x: &BigUint, y: &BigUint, m: &BigUint) -> BigUint {
                 m,
                 mr.n0inv,
                 num_words,
+                /* &mut scratch */
             );
             ::std::mem::swap(&mut z, &mut zz);
             yi <<= n;
@@ -183,7 +224,9 @@ pub fn monty_modpow(x: &BigUint, y: &BigUint, m: &BigUint) -> BigUint {
     }
 
     // convert to regular number
-    montgomery(&mut zz, &z, &one, m, mr.n0inv, num_words);
+    montgomery(
+        &mut zz, &z, &one, m, mr.n0inv, num_words, /* &mut scratch */
+    );
 
     zz.normalize();
     // One last reduction, just in case.

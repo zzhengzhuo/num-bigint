@@ -11,6 +11,7 @@ use crate::algorithms::{
     sub2, sub2rev,
 };
 use crate::big_digit::{self, BigDigit, DoubleBigDigit, BITS};
+use crate::monty;
 use crate::{BigUint, VEC_SIZE};
 
 /// 2**54
@@ -181,6 +182,9 @@ fn div_rem_mont_inner(
     with_div: bool,
     with_rem: bool,
 ) -> (Option<BigUint>, Option<BigUint>) {
+    let (q, r) = div_rem_knuth(x, y);
+    return (Some(q), Some(r));
+
     // println!("div_rem_mont {} / {}", x, y);
     let len_x = x.data.len();
     if len_x == y.data.len() {
@@ -509,9 +513,11 @@ fn shl_n(x: &mut [BigDigit], nbits: u32) -> BigDigit {
 }
 
 /// Computes `R**n (mod q)`.
-/// - `pow = R**2 (mod q)`
-/// - `q * qinv = 1 (mod 2**BITS)`, `q` is odd.
-fn radix_power_n(n: usize, q: &BigUint, qinv: &BigUint, scratch: &mut [BigDigit]) -> BigUint {
+/// - `R = 2**BITS`
+/// - `q * qinv = 1 (mod R)`
+/// - `q`, odd.
+pub fn radix_power_n(n: usize, q: &BigUint, qinv: &BigUint, scratch: &mut [BigDigit]) -> BigUint {
+    debug_assert!(q.is_odd());
     let len = q.data.len();
 
     let mut r = BigUint {
@@ -543,28 +549,27 @@ fn radix_power_n(n: usize, q: &BigUint, qinv: &BigUint, scratch: &mut [BigDigit]
     }
 
     // R**3 (mod q)
-
     if n == 3 {
         return mont_sqr_n(&r2, q, qinv, scratch);
     }
 
     let mut bm = 0u32;
     let mut j = 0;
-    let mut n = n;
-    while n > 5 {
+    let mut p = n;
+    while p > 5 {
         bm.set_bit(j, is_even(n));
-        n = (n / 2) + 1;
+        p = (p / 2) + 1;
         j += 1;
     }
 
     let r3 = mont_sqr_n(&r2, q, qinv, scratch);
     // println!("R**3 mod q = {}", &r3);
-    let mut pow = if n == 4 {
+    let mut pow = if p == 4 {
         mont_mul_n(&r2, &r3, q, qinv, scratch)
-    } else if n == 5 {
+    } else if p == 5 {
         mont_sqr_n(&r3, q, qinv, scratch)
     } else {
-        unreachable!("bad power of p")
+        unreachable!("bad power of p: {}", p)
     };
 
     for i in (0..j).rev() {
@@ -585,7 +590,7 @@ fn radix_power_n(n: usize, q: &BigUint, qinv: &BigUint, scratch: &mut [BigDigit]
 /// Calculates the modular inverse of `x` , such that `x * xinv = 1 (mod 2**BITS)`.
 /// `x` must be `odd`.
 /// Uses Netwon iterations to do so.
-fn mod_invn(x: &BigUint, scratch: &mut [BigDigit]) -> BigUint {
+pub fn mod_invn(x: &BigUint, scratch: &mut [BigDigit]) -> BigUint {
     debug_assert!(x.is_odd());
 
     let xbits = x.data.len() << 6; // TODO: adjust for 32bit
@@ -729,7 +734,7 @@ fn div_rem_knuth(u: &BigUint, d: &BigUint) -> (BigUint, BigUint) {
          * smaller numbers.
          */
 
-        div_rem_digit(&mut q0, bn);
+        div_digit(&mut q0, bn);
         let mut prod = &b * &q0;
 
         while cmp_slice(&prod.data[..], &a.data[j..]) == Ordering::Greater {
@@ -922,6 +927,7 @@ fn mont_mul(x: BigDigit, y: BigDigit, q: BigDigit, qinv: BigDigit) -> BigDigit {
         return 0;
     }
 
+    // c = x * y
     let (hi, mut lo) = umul_lohi(x, y);
 
     lo = qinv.wrapping_mul(lo);
@@ -947,6 +953,7 @@ fn mont_mul(x: BigDigit, y: BigDigit, q: BigDigit, qinv: BigDigit) -> BigDigit {
 /// `q * qinv = 1 (mod 2**b)`, `q` is odd.
 fn mont_mul_32(x: u32, y: u32, q: u32, qinv: u32) -> u32 {
     debug_assert_eq!(q & 1, 1);
+
     if x == 0 || y == 0 {
         return 0;
     }
@@ -968,6 +975,27 @@ fn mont_mul_32(x: u32, y: u32, q: u32, qinv: u32) -> u32 {
         q - (lo - hi)
     } else {
         hi - lo
+    }
+}
+
+fn _mont_mul_32(x: u32, y: u32, q: u32, qinv: u32) -> u32 {
+    debug_assert_eq!(q & 1, 1);
+
+    if x == 0 || y == 0 {
+        return 0;
+    }
+
+    let q0inv = (-(qinv as i32)) as u32;
+
+    let mut c = (x as u64).wrapping_mul(y as u64);
+    let t = c.wrapping_mul(qinv as u64);
+    c = c + t.wrapping_mul(q as u64);
+    let c = (c >> 32) as u32;
+
+    if c >= q {
+        c - q
+    } else {
+        c
     }
 }
 
@@ -993,7 +1021,7 @@ fn mont_mul_48(x: u64, y: u64, q: u64, qinv: u64) -> u64 {
 /// Calculate the montgomery product `x * y * R**-1 (mod q)`,
 /// with `R = 2**b`.
 /// `q * qinv = 1 (mod 2**b)`, `q` is odd.
-fn mont_mul_n(
+pub fn mont_mul_n(
     x: &BigUint,
     y: &BigUint,
     q: &BigUint,
@@ -1007,6 +1035,9 @@ fn mont_mul_n(
     //     q.clone().normalized()
     // );
     debug_assert!(q.is_odd());
+    if x.data.is_empty() {
+        return BigUint::zero();
+    }
 
     let len = x.data.len();
     let mut tmp = __mul3(&x.data, &y.data, scratch);
@@ -1025,10 +1056,12 @@ fn mont_mul_n(
         __add2(hi, &q.data);
     }
 
-    BigUint {
+    let res = BigUint {
         data: (&*hi).into(),
     }
-    .normalized()
+    .normalized();
+    // println!("= {}", &res);
+    res
 }
 
 /// Calculate the montgomery square `x**2 * R**-1 (mod q)`,
@@ -1161,38 +1194,8 @@ fn radix_power2(q: BigDigit, qinv: BigDigit) -> BigDigit {
         let r_m = specialized_div_rem::u128_div_rem(r, q as u128).1;
         let r2 = r_m.wrapping_mul(r_m);
 
-        return specialized_div_rem::u128_div_rem(r2, q as u128).1 as BigDigit;
-
-        // TODO: Fix below for floating point fail
-
-        // println!("64bits");
-        // q in [2**48, 2**64]
-
-        // this branch uses fast floating-point division.
-        let fquo = TWO96FLOAT / (q as f64);
-
-        // a := 2**96 , k := floor(a / q)
-        //
-        //        a = floor(a / q) * q + a % q
-        // => a % q = a - floor(a / q) * q
-        // => a % q = a - k * q
-        // => a % q = 2**96 - floor(2**96 / q) * q
-        //
-        // q < 2**64 => q fits in 64 bits, so the result fits in 64 bits,
-        // so we can do our ops using 64 bit math
-
-        // floor(2**96 / q)
-        let rem64 = fquo as u64;
-
-        // Bottom 64 bits of 2**96  - q * floor(2**96 / q)
-        let rhs = rem64.wrapping_mul(q);
-        let res = (-(rhs as i64)) as u64;
-        assert!(res <= q, "floating points failed us: {}", q);
-
-        // Convert R**(3/2) to R**2.
-        mont_sqr(res, q, qinv)
+        specialized_div_rem::u128_div_rem(r2, q as u128).1 as BigDigit
     } else if q.wrapping_shr(32) > 0 {
-        // println!("48bits");
         // q in [2**32, 2**48)
 
         // 2**60 (mod q)
@@ -1204,16 +1207,12 @@ fn radix_power2(q: BigDigit, qinv: BigDigit) -> BigDigit {
         // Convert R**(3/2) to R**2.
         mont_sqr(res, q, qinv)
     } else {
-        // println!("32 bits");
         // q in [0, 2**32)
         let res = radix_power2_32(q as u32, qinv as u32);
 
         // 2**(2*64 - 32) = 2**96 (mod q)
         let res = mont_mul_32(res, res, q as u32, qinv as u32) as BigDigit;
-        // println!("2**96 {}", res);
-        let res = mont_sqr(res, q, qinv);
-        // println!("2**64 {}", res);
-        res
+        mont_sqr(res, q, qinv)
     }
 }
 
@@ -1308,12 +1307,6 @@ fn remainder_b(x: &BigUint, q: BigDigit, qinv: BigDigit) -> BigDigit {
     let r_scaled = radix_power(n, q, qinv);
 
     mont_mul(lo, r_scaled, q, qinv)
-}
-
-/// Calculates the full double width multiply.
-#[inline(always)]
-fn usqr_lohi(x: BigDigit) -> (BigDigit, BigDigit) {
-    umul_lohi(x, x)
 }
 
 /// Upper half multiply. Calculates `floor(x * y / R)`, with `R = 2**BITS`.
@@ -1458,9 +1451,10 @@ mod tests {
 
     #[test]
     #[cfg(feature = "rand")]
-    fn test_mont_sqr() {
+    fn test_mont_sqr_rand() {
         use rand::{Rng, SeedableRng, XorShiftRng};
         let mut rng = XorShiftRng::from_seed([1u8; 16]);
+        let r = (BigDigit::max_value() as u128) + 1;
 
         for _ in 0..100 {
             let x: BigDigit = rng.gen();
@@ -1468,31 +1462,71 @@ mod tests {
             q |= 1;
 
             let qinv = mod_inv1(q);
+            let qinv = mod_inv1(q);
+            let q_big: BigUint = q.into();
+            let rinv = r
+                .into_biguint()
+                .unwrap()
+                .mod_inverse(&q_big)
+                .unwrap()
+                .into_biguint()
+                .unwrap();
 
-            assert_eq!(
-                mont_sqr(x, q, qinv),
-                ((x as u128 * x as u128) % q as u128) as BigDigit
-            );
+            let x_big: BigUint = x.into();
+
+            let res = mont_sqr(x, q, qinv);
+            let res2 = mont_mul(x, x, q, qinv);
+            assert_eq!(res, res2, "sqr and mul disagree");
+
+            let expected = div_rem_binary(&(&x_big * &x_big * &rinv), &q_big)
+                .1
+                .to_u64()
+                .unwrap();
+
+            assert_eq!(res, expected);
         }
     }
 
     #[test]
     #[cfg(feature = "rand")]
-    fn test_mont_mul() {
+    fn test_mont_mul_rand() {
         use rand::{Rng, SeedableRng, XorShiftRng};
         let mut rng = XorShiftRng::from_seed([1u8; 16]);
+        let r = (BigDigit::max_value() as u128) + 1;
 
-        for _ in 0..100 {
+        let rounds = 100;
+        for i in 0..rounds {
+            println!("round {}/{}", i, rounds);
             let x: BigDigit = rng.gen();
             let y: BigDigit = rng.gen();
             let mut q: BigDigit = rng.gen();
             q |= 1;
 
             let qinv = mod_inv1(q);
+            let q_big: BigUint = q.into();
+            let rinv = r
+                .into_biguint()
+                .unwrap()
+                .mod_inverse(&q_big)
+                .unwrap()
+                .into_biguint()
+                .unwrap();
 
+            let x_big: BigUint = x.into();
+            let y_big: BigUint = y.into();
+
+            let expected = div_rem_binary(&(&x_big * &y_big * &rinv), &q_big)
+                .1
+                .to_u64()
+                .unwrap();
+
+            let res = mont_mul(x, y, q, qinv);
+
+            println!("qinv: {}", qinv);
             assert_eq!(
-                mont_mul(x, y, q, qinv),
-                ((x as u128 * y as u128) % q as u128) as BigDigit
+                res, expected,
+                "{} * {} * {} = {} (mod {})",
+                x, y, &rinv, res, q
             );
         }
     }
@@ -1512,29 +1546,21 @@ mod tests {
             q |= 1;
 
             let qinv = mod_inv1(q as BigDigit) as u32;
-            let expected = x.wrapping_mul(y) % q;
-
-            let p = mont_mul_32(x, y, q, qinv);
-
-            // calc x * y (mod q) = p * rinv (mod q)
             let rinv = r
                 .into_biguint()
                 .unwrap()
                 .mod_inverse(&q.into_biguint().unwrap())
                 .unwrap()
-                .into_biguint()
-                .unwrap()
                 .to_u64()
                 .unwrap();
 
+            let expected = ((x as u128 * y as u128 * rinv as u128) % q as u128) as u32;
+            let res = mont_mul_32(x, y, q, qinv);
+
             assert_eq!(
-                ((p as u64 * rinv) % q as u64) as u32,
-                expected,
-                "{} * {} * 2**-32 (mod {}) = {}",
-                x,
-                y,
-                q,
-                p
+                res, expected,
+                "{} * {} * {} = {} (mod {}) (qinv = {})",
+                x, y, rinv, res, q, qinv,
             );
         }
     }
@@ -1604,9 +1630,14 @@ mod tests {
 
             let qinv = mod_inv1(q as BigDigit);
             let r2 = radix_power2(q as BigDigit, qinv);
-            let expected = (big_digit::TWO_POW_BITS as u128 % q as u128) as BigDigit;
+            let e1 = (big_digit::TWO_POW_BITS as u128 % q as u128) as BigDigit;
+            let expected = ((e1 as u128 * e1 as u128) % q as u128) as BigDigit;
 
-            assert_eq!(r2, expected, "failed to calc 2**(2*BITS) % {}", q);
+            assert_eq!(
+                r2, expected,
+                "failed to calc 2**(2*BITS) % {} ({})",
+                q, qinv
+            );
         }
     }
 
@@ -1625,9 +1656,9 @@ mod tests {
 
     #[test]
     #[cfg(feature = "rand")]
-    fn test_div_rem_digit() {
-        use rand::{thread_rng, Rng};
-        let mut rng = thread_rng();
+    fn test_div_rem_digit_rand_small() {
+        use rand::{Rng, SeedableRng, XorShiftRng};
+        let mut rng = XorShiftRng::from_seed([1u8; 16]);
 
         for _ in 1..1000 {
             let x_orig: BigDigit = rng.gen();
@@ -1642,7 +1673,28 @@ mod tests {
 
     #[test]
     #[cfg(feature = "rand")]
-    fn test_remainder_odd_range() {
+    fn test_div_rem_digit_rand_large() {
+        use rand::{Rng, SeedableRng, XorShiftRng};
+        let mut rng = XorShiftRng::from_seed([1u8; 16]);
+        use crate::bigrand::RandBigInt;
+
+        for _ in 1..1000 {
+            let x_orig = rng.gen_biguint(2048);
+            let mut x: BigUint = x_orig.clone();
+            let q: BigDigit = rng.gen();
+
+            let rem = div_rem_digit(&mut x, q);
+
+            let (eq, er) = div_rem_binary(&x_orig, &(q.into()));
+
+            assert_eq!(er.to_u64().unwrap(), rem);
+            assert_eq!(eq, x);
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "rand")]
+    fn test_remainder_odd_rand() {
         use rand::{thread_rng, Rng};
         let mut rng = thread_rng();
 
@@ -1738,8 +1790,17 @@ mod tests {
                 .into_biguint()
                 .unwrap();
 
-            let (_, res) = div_rem_knuth(&(&x * &y * &rinv), &q);
-            assert_eq!(mont_mul_n(&x, &y, &q, &qinv, &mut scratch), res,);
+            let (_, res) = div_rem_binary(&(&x * &y * &rinv), &q);
+            let res1 = mont_mul_n(&x, &y, &q, &qinv, &mut scratch);
+            let mut res2 = BigUint::zero();
+
+            let mut q0inv = !mod_inv1(q.data[0]) + 1;
+            monty::montgomery(&mut res2, &x, &y, &q, q0inv, x.data.len());
+            println!("res: {:?}", &res);
+            println!("res1: {:?}", &res1);
+            println!("res2: {:?}", &res2);
+
+            assert_eq!(res1, res);
         }
     }
 

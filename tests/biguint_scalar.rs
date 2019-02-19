@@ -31,6 +31,7 @@ fn test_scalar_add() {
 #[test]
 fn test_scalar_sub() {
     fn check(x: &BigUint, y: &BigUint, z: &BigUint) {
+        println!("{:?} - {:?} = {:?}", x, y, z);
         let (x, y, z) = (x.clone(), y.clone(), z.clone());
         assert_unsigned_scalar_op!(x - y == z);
     }

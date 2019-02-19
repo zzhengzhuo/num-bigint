@@ -292,13 +292,13 @@ const RFC3526_2048BIT_MODP_GROUP: &'static str =
      DE2BCBF6_95581718_3995497C_EA956AE5_15D22618_98FA0510\
      15728E5A_8AACAA68_FFFFFFFF_FFFFFFFF";
 
-fn modpow(c: &mut Criterion) {
+fn modpow_odd(c: &mut Criterion) {
     let mut rng = get_rng();
     let base = rng.gen_biguint(2048);
     let e = rng.gen_biguint(2048);
     let m = BigUint::from_str_radix(RFC3526_2048BIT_MODP_GROUP, 16).unwrap();
 
-    c.bench_function("modpow", move |b| b.iter(|| base.modpow(&e, &m)));
+    c.bench_function("modpow_odd", move |b| b.iter(|| base.modpow(&e, &m)));
 }
 
 fn modpow_even(c: &mut Criterion) {
@@ -373,7 +373,7 @@ criterion_group! {
         shr,
         hash,
         pow_bench,
-        modpow,
+        modpow_odd,
         modpow_even,
         roots_sqrt,
         roots_cbrt,

@@ -19,10 +19,24 @@ pub fn sbb(a: BigDigit, b: BigDigit, acc: &mut SignedDoubleBigDigit) -> BigDigit
     lo
 }
 
+#[inline]
+fn is_zero(x: &[BigDigit]) -> bool {
+    if x.is_empty() {
+        return true;
+    }
+
+    x.iter().all(|xi| *xi == 0)
+}
+
+#[inline]
 pub fn __sub2(a: &mut [BigDigit], b: &[BigDigit]) -> bool {
     let mut borrow = 0;
-    if a.is_empty() {
-        return true;
+
+    if b.len() == 1 {
+        return __sub_scalar(a, b[0]);
+    }
+    if is_zero(&*a) {
+        return !is_zero(b);
     }
 
     let len = cmp::min(a.len(), b.len());

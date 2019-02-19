@@ -31,10 +31,6 @@ use big_digit::{self, BigDigit};
 use bit_field::BitField;
 use smallvec::SmallVec;
 
-#[path = "monty.rs"]
-mod monty;
-
-use self::monty::monty_modpow;
 use super::VEC_SIZE;
 use crate::algorithms::{__add2, __add_scalar, __sub2rev, add2, sub2, sub2rev};
 use crate::algorithms::{biguint_shl, biguint_shr};
@@ -43,6 +39,7 @@ use crate::algorithms::{
     div, div_digit, div_rem, div_rem_digit, mac_with_carry, mul3, rem, rem_digit, scalar_mul,
 };
 use crate::algorithms::{extended_gcd, mod_inverse};
+use crate::monty::monty_modpow;
 use crate::traits::{ExtendedGcd, ModInverse};
 
 use ParseBigIntError;
@@ -2034,12 +2031,12 @@ impl BigUint {
     ///
     /// The digits are in little-endian base matching `BigDigit`.
     #[inline]
-    pub fn new_native(digits: SmallVec<[BigDigit; VEC_SIZE]>) -> BigUint {
+    pub(crate) fn new_native(digits: SmallVec<[BigDigit; VEC_SIZE]>) -> BigUint {
         BigUint { data: digits }.normalized()
     }
 
     #[inline]
-    fn with_capacity(capacity: usize) -> BigUint {
+    pub(crate) fn with_capacity(capacity: usize) -> BigUint {
         BigUint {
             data: SmallVec::with_capacity(capacity),
         }

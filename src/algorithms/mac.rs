@@ -18,7 +18,6 @@ pub fn mac_with_carry(a: BigDigit, b: BigDigit, c: BigDigit, acc: &mut DoubleBig
 
 /// Three argument multiply accumulate:
 /// acc += b * c
-#[inline]
 pub fn mac_digit(acc: &mut [BigDigit], b: &[BigDigit], c: BigDigit) {
     let carry = __mac_digit(acc, b, c);
     assert_eq!(carry, 0, "carry overflow during multiplication!");
@@ -48,7 +47,7 @@ pub fn __mac_digit(acc: &mut [BigDigit], b: &[BigDigit], c: BigDigit) -> BigDigi
 /// acc += b * c
 pub fn mac3(acc: &mut [BigDigit], b: &[BigDigit], c: &[BigDigit]) {
     let (x, y) = if b.len() < c.len() { (b, c) } else { (c, b) };
-
+    // println!("mac3 {}, {}", x.len(), y.len());
     // We use three algorithms for different input sizes.
     //
     // - For small inputs, long multiplication is fastest.
@@ -60,7 +59,9 @@ pub fn mac3(acc: &mut [BigDigit], b: &[BigDigit], c: &[BigDigit]) {
     // The thresholds are somewhat arbitrary, chosen by evaluating the results
     // of `cargo bench --bench bigint multiply`.
 
-    if x.len() <= 32 {
+    if x.len() == 1 {
+        mac_digit(acc, y, x[0])
+    } else if x.len() <= 32 {
         long(acc, x, y)
     } else if x.len() <= 256 {
         karatsuba(acc, x, y)
@@ -70,7 +71,6 @@ pub fn mac3(acc: &mut [BigDigit], b: &[BigDigit], c: &[BigDigit]) {
 }
 
 /// Long multiplication:
-#[inline]
 fn long(acc: &mut [BigDigit], x: &[BigDigit], y: &[BigDigit]) {
     for (i, xi) in x.iter().enumerate() {
         mac_digit(&mut acc[i..], y, *xi);
